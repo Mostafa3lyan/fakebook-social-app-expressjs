@@ -133,7 +133,7 @@ export class PostService {
         ...(search && { content: { $regex: escapeRegex(search), $options: "i" } }),
       },
       populate: POST_POPULATE,
-      projection: { reactions: 0, comments: 0 },
+      projection: { comments: 0 },
       page,
       limit,
       sort: { createdAt: -1 },
@@ -199,7 +199,7 @@ export class PostService {
         ...(search && { content: { $regex: escapeRegex(search), $options: "i" } }),
       },
       populate: POST_POPULATE,
-      projection: { reactions: 0, comments: 0 },
+      projection: { comments: 0 },
       page,
       limit,
       sort: { createdAt: -1 },
@@ -228,7 +228,7 @@ export class PostService {
     const survivors = current.filter((key) => !toRemove.has(key));
     const totalAttachments = survivors.length + files.length;
 
-    if (!(content ?? post.content) && totalAttachments === 0) {
+    if (!(content ?? post.content) && totalAttachments === 0 && !post.sharedFrom) {
       throw new BadRequestException("Post must have either content or at least one attachment");
     }
     if (totalAttachments > this.MAX_ATTACHMENTS) {
@@ -256,7 +256,8 @@ export class PostService {
           ...(content !== undefined && { content }),
           ...(visibility !== undefined && { visibility }),
           ...(mentions !== undefined && { tags: mentions }),
-          ...(location !== undefined && { location }),
+          ...(location !== undefined && location !== null && { location }),
+          ...(location === null && { $unset: { location: 1 } }),
           ...(attachmentsChanged && { attachments: [...survivors, ...newAttachments] }),
           updatedBy: user._id,
           ...(contentChanged && { isEdited: true }),

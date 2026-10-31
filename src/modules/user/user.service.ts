@@ -85,7 +85,7 @@ class UserService {
     return user;
   };
 
-  // search users by name or email (excluding blocked/blocking users)
+  // search users by name only (excluding blocked/blocking users)
   public searchUsers = async (
     { search, page = 1, limit = 10 }: SearchUserDto,
     loggedInUser?: HydratedDocument<IUser>,
@@ -100,12 +100,20 @@ class UserService {
         $or: [
           { firstName: regex },
           { lastName: regex },
-          { email: regex },
+          {
+            $expr: {
+              $regexMatch: {
+                input: { $concat: ["$firstName", " ", "$lastName"] },
+                regex: escaped,
+                options: "i",
+              },
+            },
+          },
         ],
         ...(blockedIds.length && { _id: { $nin: blockedIds } }),
         ...(loggedInUser && { blockedUsers: { $ne: loggedInUser._id } }),
       },
-      projection: "firstName lastName email profilePicture",
+      projection: "firstName lastName profilePicture",
       page,
       limit,
       sort: { firstName: 1, lastName: 1 },

@@ -9,6 +9,7 @@ import { ProviderEnum } from "../../common/enums/user.enum";
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   TooManyRequestsException,
   UnauthorizedException,
@@ -114,6 +115,18 @@ class AuthenticationService {
       filter: { email, paranoid: false },
     });
     if (emailExist) {
+      if (!emailExist.emailConfirmedAt && (!emailExist.provider || emailExist.provider === ProviderEnum.System)) {
+        try {
+          const payload = { email, subject: EmailSubjectEnum.Confirm_EMAIL };
+          const otpTtl = await this.redis.ttl(this.redis.otpKey(payload));
+          if (otpTtl <= 0) {
+            await this.sendEmailWithOtp(email, "email address", EmailSubjectEnum.Confirm_EMAIL);
+          }
+        } catch {
+          // Ignore OTP cooldown/rate-limit errors so the user is still redirected to confirm-signup-email
+        }
+        return emailExist as unknown as IUser;
+      }
       throw new ConflictException("Email already exist");
     }
 
@@ -346,6 +359,33 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
     });
 
     if (!user) {
+      const unconfirmedUser = await this.userRepository.findOne({
+        filter: { email, provider: ProviderEnum.System, emailConfirmedAt: { $exists: false } },
+        projection: "+password",
+        options: { lean: false },
+      });
+
+      if (unconfirmedUser) {
+        const match = await compareHash({
+          plainText: password,
+          cipherText: unconfirmedUser.password as string,
+          approach: HashApproachEnum.bcrypt,
+        });
+
+        if (match) {
+          try {
+            const payload = { email, subject: EmailSubjectEnum.Confirm_EMAIL };
+            const otpTtl = await this.redis.ttl(this.redis.otpKey(payload));
+            if (otpTtl <= 0) {
+              await this.sendEmailWithOtp(email, "email address", EmailSubjectEnum.Confirm_EMAIL);
+            }
+          } catch {
+            // Ignore OTP cooldown/rate-limit errors so the user is still redirected to confirm-signup-email
+          }
+          throw new ForbiddenException("Email is not confirmed. Please verify your email.");
+        }
+      }
+
       const deactivatedUser = await this.userRepository.findOne({
         filter: { email, provider: ProviderEnum.System, emailConfirmedAt: { $exists: true }, paranoid: false },
         projection: "+password",

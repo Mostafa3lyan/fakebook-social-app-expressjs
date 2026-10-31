@@ -35,6 +35,16 @@ const jsonArrayField = <T extends z.ZodTypeAny>(itemSchema: T) =>
     }
   }, z.array(itemSchema));
 
+const jsonObjectField = <T extends z.ZodTypeAny>(itemSchema: T) =>
+  z.preprocess((val) => {
+    if (typeof val !== "string") return val;
+    try {
+      return JSON.parse(val);
+    } catch {
+      return val;
+    }
+  }, itemSchema);
+
 export const createPostSchema = {
   body: z
     .object({
@@ -43,7 +53,7 @@ export const createPostSchema = {
       removeAttachments: jsonArrayField(z.string()).optional(),
       visibility: z.enum(PostVisibilityEnum),
       tags: jsonArrayField(objectId).optional(),
-      location: locationSchema.optional(),
+      location: jsonObjectField(locationSchema).optional(),
     })
     .superRefine((data, ctx) => {
       if (!data.content && (!data.attachments || data.attachments.length === 0)) {
@@ -74,7 +84,7 @@ const updatePostBody = z
     removeAttachments: jsonArrayField(z.string()).optional(),
     visibility: z.enum(PostVisibilityEnum).optional(),
     tags: jsonArrayField(objectId).optional(),
-    location: locationSchema.optional(),
+    location: jsonObjectField(locationSchema.nullable()).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.tags?.length) {
