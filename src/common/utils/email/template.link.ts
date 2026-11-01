@@ -22,7 +22,7 @@ export const magicLinkTemplate = (link: string) => {
               <!-- Logo -->
               <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;">
                 <tr>
-                  <td style="width:34px;height:34px;background:linear-gradient(135deg,#7c3aed,#a855f7);border-radius:9px;text-align:center;vertical-align:middle;padding:0 8px;">
+                  <td style="width:34px;height:34px;background:linear-gradient(135deg,#1877f2,#3b82f6);border-radius:9px;text-align:center;vertical-align:middle;padding:0 8px;">
                     <span style="color:#fff;font-size:18px;font-weight:bold;">F</span>
                   </td>
                   <td style="padding-left:10px;font-size:17px;font-weight:700;color:#f0f0f5;letter-spacing:-0.3px;">
@@ -34,7 +34,7 @@ export const magicLinkTemplate = (link: string) => {
               <!-- Title -->
               <div style="font-size:28px;font-weight:800;color:#f0f0f5;line-height:1.2;letter-spacing:-0.5px;">
                 Reset your<br/>
-                <span style="color:#a78bfa;">password</span>
+                <span style="color:#3b82f6;">password</span>
               </div>
 
             </td>
@@ -56,7 +56,7 @@ export const magicLinkTemplate = (link: string) => {
                 <tr>
                   <td align="center">
                     <a href="${link}"
-                      style="display:inline-block;padding:16px 40px;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;border-radius:12px;letter-spacing:0.3px;">
+                      style="display:inline-block;padding:16px 40px;background:linear-gradient(135deg,#1877f2,#3b82f6);color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;border-radius:12px;letter-spacing:0.3px;">
                       Reset Password
                     </a>
                   </td>
@@ -64,7 +64,7 @@ export const magicLinkTemplate = (link: string) => {
               </table>
 
               <!-- Fallback link -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0d0d0f;border:1px solid #2a2a30;border-radius:14px;margin-bottom:28px;border-left:3px solid #7c3aed;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0d0d0f;border:1px solid #2a2a30;border-radius:14px;margin-bottom:28px;border-left:3px solid #1877f2;">
                 <tr>
                   <td style="padding:18px 24px;">
                     <p style="font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#6b6b80;margin:0 0 10px 0;">
@@ -104,7 +104,7 @@ export const magicLinkTemplate = (link: string) => {
               <p style="font-size:13px;color:#6b6b7a;line-height:1.7;margin:0;">
                 If you didn't request a password reset, your account is safe — no changes were made.<br/><br/>
                 Need help?
-                <a href="#" style="color:#a78bfa;text-decoration:none;">Contact our support team</a>
+                <a href="#" style="color:#3b82f6;text-decoration:none;">Contact our support team</a>
                 — we're always around.
               </p>
 
@@ -137,7 +137,7 @@ export const magicLinkTemplate = (link: string) => {
           <tr>
             <td style="text-align:center;font-size:11px;color:#3a3a48;line-height:1.8;">
               Sent to user@example.com ·
-              <a href="#" style="color:#554466;text-decoration:none;">Manage preferences</a><br/>
+              <a href="#" style="color:#3b82f6;text-decoration:none;">Manage preferences</a><br/>
               Fakebook Inc., 123 Privacy Lane, San Francisco, CA 94103
             </td>
           </tr>
