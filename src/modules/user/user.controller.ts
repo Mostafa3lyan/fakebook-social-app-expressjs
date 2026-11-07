@@ -162,18 +162,16 @@ router.get(
 
 
 
-// add Profile Image
-// handled by s3 presigned url
+// Request pre-signed S3 URL for a new profile image.
+// The returned `key` is stored as `profilePicture`; the client then PUTs the
+// binary directly to `url`.
 router.patch(
   "/profile-image",
   authentication(),
-  // cloudFileUpload({
-  //   validation: fileFieldValidation.image,
-  // }).single("attachment"),
-  // validation(validators.profileImage),
+  validation(validators.presignedImageSchema),
   async (req: Request, res: Response) => {
     const data = await userService.profileImage(
-      req.body,
+      req.body as validators.PresignedImageDto,
       req.user,
     );
     return successResponse({ res, data });
@@ -185,29 +183,44 @@ router.delete(
   "/remove-profile-image",
   authentication(),
   async (req: Request, res: Response) => {
-    await userService.removeProfileImage(req.user);
+    const user = await userService.removeProfileImage(req.user);
     return successResponse({
       message: "Profile image removed successfully",
       res,
+      data: { user },
     });
   },
 );
 
-// // Add Cover Images
-// router.patch(
-//   "/profile-cover-image",
-//   authentication(),
-//   localFileUpload({
-//     customPath: "users/profile/cover",
-//     validation: fileFieldValidation.image,
-//     maxSize: 5,
-//   }).array("attachments", 5),
-//   validation(validators.profileCoverImage),
-//   async (req: Request, res: Response) => {
-//     const account = await userService.profileCoverImage(req.files as any[], req.user);
-//     return successResponse({ res, data: { account } });
-//   },
-// );
+// Request pre-signed S3 URL for a new cover image.
+// The returned `key` replaces `profileCoverPictures`; the client then PUTs the
+// binary directly to `url`.
+router.patch(
+  "/profile-cover-image",
+  authentication(),
+  validation(validators.presignedImageSchema),
+  async (req: Request, res: Response) => {
+    const data = await userService.profileCoverImage(
+      req.body as validators.PresignedImageDto,
+      req.user,
+    );
+    return successResponse({ res, data });
+  },
+);
+
+// remove Cover Image
+router.delete(
+  "/remove-profile-cover-image",
+  authentication(),
+  async (req: Request, res: Response) => {
+    const user = await userService.removeProfileCoverImage(req.user);
+    return successResponse({
+      message: "Cover image removed successfully",
+      res,
+      data: { user },
+    });
+  },
+);
 
 // Change Password
 router.patch(

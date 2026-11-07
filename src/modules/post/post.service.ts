@@ -68,7 +68,10 @@ export class PostService {
       throw err;
     }
 
-    await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "post");
+    await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "post", {
+      entityId: post._id.toString(),
+      actionUrl: `/?postId=${post._id.toString()}`,
+    });
 
     return post;
   }
@@ -115,8 +118,15 @@ export class PostService {
     });
 
     // Notify tagged users and root author (best effort)
-    await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "post");
-    await this.postHelper.notifyAuthor(rootAuthorId, user, "shared your post");
+    await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "post", {
+      entityId: sharedPost._id.toString(),
+      actionUrl: `/?postId=${sharedPost._id.toString()}`,
+    });
+    await this.postHelper.notifyAuthor(rootAuthorId, user, "shared your post", {
+      entityType: "post",
+      entityId: rootPostId.toString(),
+      actionUrl: `/?postId=${rootPostId.toString()}`,
+    });
 
     return sharedPost;
   }
@@ -316,6 +326,18 @@ export class PostService {
         filter: { _id: postId, "reactions.createdBy": { $ne: user._id } },
         update: AddReactionUpdate(user._id, reaction),
       });
+
+      // Notify post author (if not self)
+      await this.postHelper.notifyAuthor(
+        post.createdBy,
+        user,
+        `reacted with ${reaction} to your post`,
+        {
+          entityType: "post",
+          entityId: postId,
+          actionUrl: `/?postId=${postId}`,
+        },
+      );
     }
 
     const updatedPost = await this.postRepository.findById({

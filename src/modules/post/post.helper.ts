@@ -84,17 +84,28 @@ export class PostHelper {
     next: Types.ObjectId[] | undefined,
     actor: HydratedDocument<IUser>,
     target: "post" | "comment" = "post",
+    extraData?: Record<string, unknown>,
   ) {
     if (!next?.length) return;
 
     const existing = new Set((previous ?? []).map(String));
-    const newlyTagged = next.filter((id) => !existing.has(id.toString()));
+    const actorIdStr = actor._id.toString();
+    const newlyTagged = next.filter(
+      (id) => !existing.has(id.toString()) && id.toString() !== actorIdStr,
+    );
 
     await Promise.allSettled(
       newlyTagged.map((id) =>
         this.notificationsService.notifyNewMessage({
           recipientId: id.toString(),
           message: `${actor.firstName} ${actor.lastName} mentioned you in a ${target}`,
+          data: {
+            actorId: actorIdStr,
+            actorName: `${actor.firstName} ${actor.lastName}`,
+            actorAvatar: actor.profilePicture ?? null,
+            entityType: target,
+            ...(extraData || {}),
+          },
         }),
       ),
     );
@@ -105,6 +116,7 @@ export class PostHelper {
     ownerId: Types.ObjectId | IUser,
     actor: HydratedDocument<IUser>,
     message: string,
+    extraData?: Record<string, unknown>,
   ) {
     const recipientId = (ownerId as { _id?: Types.ObjectId })._id?.toString() ?? ownerId.toString();
     if (recipientId === actor._id.toString()) return;
@@ -112,6 +124,12 @@ export class PostHelper {
       await this.notificationsService.notifyNewMessage({
         recipientId,
         message: `${actor.firstName} ${actor.lastName} ${message}`,
+        data: {
+          actorId: actor._id.toString(),
+          actorName: `${actor.firstName} ${actor.lastName}`,
+          actorAvatar: actor.profilePicture ?? null,
+          ...(extraData || {}),
+        },
       });
     } catch (err) {
       console.error("Failed to send notification:", err);

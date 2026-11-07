@@ -112,9 +112,26 @@ export class CommentService {
       console.error("Failed to update counters:", err);
     }
 
-    await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "comment");
-    if (parent) await this.postHelper.notifyAuthor(parent.createdBy, user, "replied to your comment");
-    else await this.postHelper.notifyAuthor(post.createdBy, user, "commented on your post");
+    await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "comment", {
+      entityId: comment._id.toString(),
+      postId: post._id.toString(),
+      actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
+    });
+    if (parent) {
+      await this.postHelper.notifyAuthor(parent.createdBy, user, "replied to your comment", {
+        entityType: "comment",
+        entityId: comment._id.toString(),
+        postId: post._id.toString(),
+        actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
+      });
+    } else {
+      await this.postHelper.notifyAuthor(post.createdBy, user, "commented on your post", {
+        entityType: "comment",
+        entityId: comment._id.toString(),
+        postId: post._id.toString(),
+        actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
+      });
+    }
 
     return comment;
   }
@@ -307,6 +324,19 @@ export class CommentService {
         filter: { _id: commentId, "reactions.createdBy": { $ne: user._id } },
         update: AddReactionUpdate(user._id, reaction),
       });
+
+      // Notify comment author (if not self)
+      await this.postHelper.notifyAuthor(
+        comment.createdBy,
+        user,
+        `reacted with ${reaction} to your comment`,
+        {
+          entityType: "comment",
+          entityId: commentId,
+          postId,
+          actionUrl: `/?postId=${postId}&commentId=${commentId}`,
+        },
+      );
     }
 
     const updatedComment = await this.commentRepository.findById({

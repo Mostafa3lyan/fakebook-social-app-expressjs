@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from "../../common/exceptions/index";
 import { IUser, IPagination } from "../../common/interfaces";
-import { s3Service, S3Service } from "../../common/services";
+import { notificationsService, NotificationsService, s3Service, S3Service } from "../../common/services";
 import { RedisService, redisService } from "../../common/services/redis.service";
 import { TokenService } from "../../common/services/token.service";
 import { decodedTypes } from "../../common/types/user.types";
@@ -29,6 +29,7 @@ import {
   RestoreAccountDto,
   UpdateProfileDto,
   SearchUserDto,
+  PresignedImageDto,
 } from "./user.validation";
 
 class UserService {
@@ -39,6 +40,7 @@ class UserService {
   private readonly redis: RedisService;
   private readonly tokenService: TokenService;
   private readonly s3: S3Service;
+  private readonly notificationsService: NotificationsService;
   constructor(
     userRepository: UserRepository = new UserRepository(),
     postServiceInstance: PostService = postService,
@@ -47,6 +49,7 @@ class UserService {
     tokenService: TokenService = new TokenService(),
     redis: RedisService = redisService,
     s3: S3Service = s3Service,
+    notifications: NotificationsService = notificationsService,
   ) {
     this.userRepository = userRepository;
     this.postService = postServiceInstance;
@@ -55,6 +58,7 @@ class UserService {
     this.tokenService = tokenService;
     this.redis = redis;
     this.s3 = s3;
+    this.notificationsService = notifications;
   }
 
 
@@ -78,6 +82,12 @@ class UserService {
     if (data.gender !== undefined) user.gender = data.gender;
 
     await user.save();
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to sync profile update to Knock:", err);
+    }
 
     if (user.phone) {
       user.phone = decryptGenerator({ encryptedText: user.phone });
@@ -223,6 +233,12 @@ class UserService {
       case LogoutEnum.all:
         user.changeCredentialsTime = new Date();
         await user.save();
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to sync profile update to Knock:", err);
+    }
         await this.redis.del(await this.redis.scanKeys(this.redis.revokeTokenPrefix(sub)));
         break;
 
@@ -272,7 +288,7 @@ class UserService {
   public shareProfile = async (userId: ShareProfileDto, loggedInUser: HydratedDocument<IUser>) => {
     const account = await this.userRepository.findOne({
       filter: { _id: userId },
-      projection: "firstName lastName profilePicture profileVisits blockedUsers",
+      projection: "firstName lastName profilePicture profileCoverPictures profileVisits blockedUsers",
     });
 
     if (!account) {
@@ -307,30 +323,115 @@ class UserService {
     return account;
   };
 
-  // upload and remove image url from database handled by AWS Lambda
-  // upload profile image
-  public profileImage = async ({ contentType, originalname }: { contentType: string, originalname: string }, user: HydratedDocument<IUser>) => {
-    const { url } = await this.s3.createPreSignedUrl({
+  // ---------------------------------------------------------------------------
+  // Profile & cover images (S3 pre-signed PUT uploads + AWS Lambda sync)
+  //
+  // Flow:
+  // 1. Client requests a pre-signed PUT URL from the backend.
+  // 2. Client PUTs the binary directly to S3 under:
+  //    - `Fakebook/users/{userId}/profile/{uuid}__{filename}`
+  //    - `Fakebook/users/{userId}/cover/{uuid}__{filename}`
+  // 3. AWS S3 triggers the `s3-file-upload` Lambda on `ObjectCreated` /
+  //    `ObjectRemoved`, which updates `profilePicture` or `profileCoverPictures`
+  //    in MongoDB.
+  // ---------------------------------------------------------------------------
+
+  private isS3Key = (value?: string | null): value is string =>
+    Boolean(value) && !/^https?:\/\//i.test(value as string);
+
+  private sanitizeFileName = (originalname: string) =>
+    originalname
+      .trim()
+      .replace(/[/\\]+/g, "_")
+      .replace(/[^\w.\-]+/g, "_")
+      .slice(-100) || "image";
+
+  // upload profile image (returns pre-signed PUT url; DB updated by AWS Lambda)
+  public profileImage = async (
+    { contentType, originalname }: PresignedImageDto,
+    user: HydratedDocument<IUser>,
+  ) => {
+    const previous = user.profilePicture;
+
+    const { url, key } = await this.s3.createPreSignedUrl({
       path: `users/${user._id.toString()}/profile`,
       contentType,
-      originalname,
+      originalname: this.sanitizeFileName(originalname),
     });
-    return { user, url };
+
+    if (this.isS3Key(previous) && previous !== key) {
+      await this.s3.deleteAsset({ key: previous }).catch(() => undefined);
+    }
+
+    return { user, url, key };
   };
 
-  // remove profile image
+  // remove profile image (S3 deletion triggers AWS Lambda to unset profilePicture)
   public removeProfileImage = async (user: HydratedDocument<IUser>) => {
-    if (!user.profilePicture) {
+    const current = user.profilePicture;
+    if (!current) {
       throw new NotFoundException("There is no profile picture to remove");
     }
-    await this.s3.deleteAsset({ key: user.profilePicture });
+
+    if (this.isS3Key(current)) {
+      await this.s3.deleteAsset({ key: current });
+    } else {
+      // External avatar URL (e.g. Google OAuth) has no S3 object to trigger Lambda
+      user.profilePicture = undefined;
+      await user.save();
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to sync profile update to Knock:", err);
+    }
+    }
+
     return user;
   };
 
-  // upload cover image
-  public profileCoverImage = async (files: any[], user: HydratedDocument<IUser>) => {
-    user.profileCoverPictures = files.map((file) => file.finalPath);
-    await user.save();
+  // upload cover image (returns pre-signed PUT url; DB updated by AWS Lambda)
+  public profileCoverImage = async (
+    { contentType, originalname }: PresignedImageDto,
+    user: HydratedDocument<IUser>,
+  ) => {
+    const previous = (user.profileCoverPictures || []).filter(this.isS3Key);
+
+    const { url, key } = await this.s3.createPreSignedUrl({
+      path: `users/${user._id.toString()}/cover`,
+      contentType,
+      originalname: this.sanitizeFileName(originalname),
+    });
+
+    const stale = previous.filter((oldKey) => oldKey !== key);
+    if (stale.length) {
+      await this.s3.deleteMultipleAssets({ keys: stale }).catch(() => undefined);
+    }
+
+    return { user, url, key };
+  };
+
+  // remove cover image (S3 deletion triggers AWS Lambda to pull from profileCoverPictures)
+  public removeProfileCoverImage = async (user: HydratedDocument<IUser>) => {
+    const current = user.profileCoverPictures || [];
+    if (!current.length) {
+      throw new NotFoundException("There is no cover picture to remove");
+    }
+
+    const keys = current.filter(this.isS3Key);
+    if (keys.length) {
+      await this.s3.deleteMultipleAssets({ keys });
+    } else {
+      user.profileCoverPictures = [];
+      await user.save();
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to sync profile update to Knock:", err);
+    }
+    }
+
     return user;
   };
 
@@ -390,6 +491,12 @@ class UserService {
     user.deletedAt = new Date();
     user.changeCredentialsTime = new Date();
     await user.save();
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to sync profile update to Knock:", err);
+    }
 
     // 3. Invalidate active Redis tokens
     const revokedKeys = await this.redis.scanKeys(this.redis.revokeTokenPrefix(user._id));
@@ -492,10 +599,20 @@ class UserService {
       throw new NotFoundException("Account not found");
     }
 
-    // 9. Delete user S3 folder (profile pictures, etc.)
+    // 9. Delete user S3 folder (profile and cover pictures, including legacy keys)
+    await this.s3.deleteFolderByPrefix({
+      prefix: `${user._id.toString()}`,
+    }).catch(() => undefined);
     await this.s3.deleteFolderByPrefix({
       prefix: `users/${user._id.toString()}`,
-    });
+    }).catch(() => undefined);
+
+    // 10. Delete user from Knock
+    try {
+      await this.notificationsService.deleteUser(user._id.toString());
+    } catch (err) {
+      console.error("Failed to delete user in Knock:", err);
+    }
 
     return { message: "Account permanently deleted" };
   };

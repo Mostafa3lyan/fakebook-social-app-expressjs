@@ -27,34 +27,38 @@ export class FriendsService {
   }
 
   // Send friend request
-  public async sendFriendRequest(sender: HydratedDocument<IUser>, receiverId: string) {
-    if (sender._id.toString() === receiverId) {
+  public async sendFriendRequest(sender: HydratedDocument<IUser>, receiverId: string | Types.ObjectId) {
+    const receiverIdStr = receiverId.toString();
+
+    if (sender._id.toString() === receiverIdStr) {
       throw new BadRequestException("You cannot send a friend request to yourself");
     }
 
-    const receiver = await this.userRepository.findById({ id: receiverId });
+    const receiver = await this.userRepository.findById({ id: receiverIdStr });
     if (!receiver) {
       throw new NotFoundException("User not found");
     }
 
     const senderFriendIds = (sender.friends || []).map((f) =>
-      typeof f === "object" && "_id" in f ? (f as any)._id.toString() : f.toString(),
+      typeof f === "object" && f !== null && "_id" in f
+        ? String((f as { _id: unknown })._id)
+        : String(f),
     );
-    if (senderFriendIds.includes(receiverId)) {
+    if (senderFriendIds.includes(receiverIdStr)) {
       throw new ConflictException("You are already friends with this user");
     }
 
     const senderBlocked = (sender.blockedUsers || []).map(String);
     const receiverBlocked = (receiver.blockedUsers || []).map(String);
-    if (senderBlocked.includes(receiverId) || receiverBlocked.includes(sender._id.toString())) {
+    if (senderBlocked.includes(receiverIdStr) || receiverBlocked.includes(sender._id.toString())) {
       throw new ForbiddenException("Cannot send friend request to this user");
     }
 
     const existingRequest = await this.friendRequestRepository.findOne({
       filter: {
         $or: [
-          { sender: sender._id, receiver: receiverId },
-          { sender: receiverId, receiver: sender._id },
+          { sender: sender._id, receiver: receiverIdStr },
+          { sender: receiverIdStr, receiver: sender._id },
         ],
         status: FriendRequestStatusEnum.PENDING,
       },
@@ -71,7 +75,7 @@ export class FriendsService {
     const request = await this.friendRequestRepository.createOne({
       data: {
         sender: sender._id,
-        receiver: new Types.ObjectId(receiverId),
+        receiver: new Types.ObjectId(receiverIdStr),
         status: FriendRequestStatusEnum.PENDING,
       },
     });
@@ -79,8 +83,16 @@ export class FriendsService {
     // Notify receiver (best-effort)
     try {
       await this.notificationsService.notifyNewMessage({
-        recipientId: receiverId,
+        recipientId: receiverIdStr,
         message: `${sender.firstName} ${sender.lastName} sent you a friend request`,
+        data: {
+          entityType: "friend_request",
+          entityId: request._id.toString(),
+          actorId: sender._id.toString(),
+          actorName: `${sender.firstName} ${sender.lastName}`,
+          actorAvatar: sender.profilePicture ?? null,
+          actionUrl: "/friends",
+        },
       });
     } catch (err) {
       console.error("Failed to notify user about friend request:", err);
@@ -104,6 +116,10 @@ export class FriendsService {
       throw new ForbiddenException("You are not authorized to accept this friend request");
     }
 
+    if (request.sender.toString() === user._id.toString()) {
+      throw new BadRequestException("You cannot accept your own friend request");
+    }
+
     if (request.status !== FriendRequestStatusEnum.PENDING) {
       throw new BadRequestException(`Friend request is already ${request.status}`);
     }
@@ -120,18 +136,21 @@ export class FriendsService {
       throw new ForbiddenException("Cannot accept friend request from a blocked user");
     }
 
+    const senderObjectId = new Types.ObjectId(senderId);
+    const userObjectId = new Types.ObjectId(user._id);
+
     // Mutually add to friends array using $addToSet to avoid duplicates
     await this.userRepository.updateOne({
-      filter: { _id: user._id },
-      update: { $addToSet: { friends: new Types.ObjectId(senderId) } },
+      filter: { _id: userObjectId },
+      update: { $addToSet: { friends: senderObjectId } },
     });
 
     await this.userRepository.updateOne({
-      filter: { _id: senderId },
-      update: { $addToSet: { friends: user._id } },
+      filter: { _id: senderObjectId },
+      update: { $addToSet: { friends: userObjectId } },
     });
 
-    // Option A: Delete the request document on accept so future state remains clean
+    // Delete the request document on accept so future state remains clean
     await this.friendRequestRepository.deleteOne({
       filter: { _id: requestId },
     });
@@ -141,6 +160,14 @@ export class FriendsService {
       await this.notificationsService.notifyNewMessage({
         recipientId: senderId,
         message: `${user.firstName} ${user.lastName} accepted your friend request`,
+        data: {
+          entityType: "friend_accept",
+          entityId: user._id.toString(),
+          actorId: user._id.toString(),
+          actorName: `${user.firstName} ${user.lastName}`,
+          actorAvatar: user.profilePicture ?? null,
+          actionUrl: `/profile/${user._id.toString()}`,
+        },
       });
     } catch (err) {
       console.error("Failed to notify user about accepted friend request:", err);
@@ -160,7 +187,7 @@ export class FriendsService {
       throw new ForbiddenException("You are not authorized to reject this friend request");
     }
 
-    // Option A: Delete the request document
+    // Delete the request document
     await this.friendRequestRepository.deleteOne({
       filter: { _id: requestId },
     });
@@ -179,7 +206,7 @@ export class FriendsService {
       throw new ForbiddenException("You are not authorized to cancel this friend request");
     }
 
-    // Option A: Delete the request document
+    // Delete the request document
     await this.friendRequestRepository.deleteOne({
       filter: { _id: requestId },
     });
@@ -189,23 +216,54 @@ export class FriendsService {
 
   // Remove an existing friend
   public async removeFriend(user: HydratedDocument<IUser>, friendId: string) {
+    if (user._id.toString() === friendId) {
+      throw new BadRequestException("You cannot unfriend yourself");
+    }
+
+    const friendObjectId = new Types.ObjectId(friendId);
+    const userObjectId = new Types.ObjectId(user._id);
+
+    const friendUser = await this.userRepository.findById({ id: friendId });
+    if (!friendUser) {
+      throw new NotFoundException("User not found");
+    }
+
     const userFriendIds = (user.friends || []).map((f) =>
-      typeof f === "object" && "_id" in f ? (f as any)._id.toString() : f.toString(),
+      typeof f === "object" && f !== null && "_id" in f
+        ? String((f as { _id: unknown })._id)
+        : String(f),
     );
 
-    if (!userFriendIds.includes(friendId)) {
+    const targetFriendIds = (friendUser.friends || []).map((f) =>
+      typeof f === "object" && f !== null && "_id" in f
+        ? String((f as { _id: unknown })._id)
+        : String(f),
+    );
+
+    const areFriends = userFriendIds.includes(friendId) || targetFriendIds.includes(user._id.toString());
+    if (!areFriends) {
       throw new BadRequestException("User is not in your friends list");
     }
 
     // Mutually remove from both friends arrays
     await this.userRepository.updateOne({
-      filter: { _id: user._id },
-      update: { $pull: { friends: new Types.ObjectId(friendId) } },
+      filter: { _id: userObjectId },
+      update: { $pull: { friends: friendObjectId } },
     });
 
     await this.userRepository.updateOne({
-      filter: { _id: friendId },
-      update: { $pull: { friends: user._id } },
+      filter: { _id: friendObjectId },
+      update: { $pull: { friends: userObjectId } },
+    });
+
+    // Clean up any pending or lingering friend request between them
+    await this.friendRequestRepository.deleteMany({
+      filter: {
+        $or: [
+          { sender: userObjectId, receiver: friendObjectId },
+          { sender: friendObjectId, receiver: userObjectId },
+        ],
+      },
     });
 
     return { message: "Friend removed successfully" };
@@ -230,7 +288,8 @@ export class FriendsService {
       throw new NotFoundException("User not found");
     }
 
-    let allFriends = ((account.friends || []) as unknown as IUser[]).filter(Boolean);
+    let allFriends = ((account.friends || []) as unknown as (IUser & { _id?: Types.ObjectId | string })[])
+      .filter((f) => f && f._id && f._id.toString() !== targetUserId);
 
     if (search) {
       const q = search.toLowerCase();
@@ -300,23 +359,40 @@ export class FriendsService {
   }
 
   // Get relationship status between logged-in user and target user
-  public async getRelationshipStatus(user: HydratedDocument<IUser>, targetUserId: string) {
-    if (user._id.toString() === targetUserId) {
+  public async getRelationshipStatus(user: HydratedDocument<IUser>, targetUserId: string | Types.ObjectId) {
+    const targetUserIdStr = targetUserId.toString();
+
+    if (user._id.toString() === targetUserIdStr) {
       return { status: "self" };
     }
 
     const friendIds = (user.friends || []).map((f) =>
-      typeof f === "object" && "_id" in f ? (f as any)._id.toString() : f.toString(),
+      typeof f === "object" && f !== null && "_id" in f
+        ? String((f as { _id: unknown })._id)
+        : String(f),
     );
 
-    if (friendIds.includes(targetUserId)) {
+    if (friendIds.includes(targetUserIdStr)) {
       return { status: "friends" };
+    }
+
+    // Bidirectional check in case of database asymmetry
+    const targetUser = await this.userRepository.findById({ id: targetUserIdStr });
+    if (targetUser) {
+      const targetFriendIds = (targetUser.friends || []).map((f) =>
+        typeof f === "object" && f !== null && "_id" in f
+          ? String((f as { _id: unknown })._id)
+          : String(f),
+      );
+      if (targetFriendIds.includes(user._id.toString())) {
+        return { status: "friends" };
+      }
     }
 
     const outgoing = await this.friendRequestRepository.findOne({
       filter: {
         sender: user._id,
-        receiver: targetUserId,
+        receiver: targetUserIdStr,
         status: FriendRequestStatusEnum.PENDING,
       },
     });
@@ -327,7 +403,7 @@ export class FriendsService {
 
     const incoming = await this.friendRequestRepository.findOne({
       filter: {
-        sender: targetUserId,
+        sender: targetUserIdStr,
         receiver: user._id,
         status: FriendRequestStatusEnum.PENDING,
       },

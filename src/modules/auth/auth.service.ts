@@ -182,6 +182,12 @@ class AuthenticationService {
     account.emailConfirmedAt = new Date();
     await account.save();
 
+    try {
+      await this.notificationsService.identifyUser(account);
+    } catch (err) {
+      console.error("Failed to identify user in Knock:", err);
+    }
+
     await this.redis.del([
       this.redis.otpKey(payload),
       this.redis.otpAttemptsKey(payload),
@@ -598,16 +604,32 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
       };
     }
 
+    const rawFirstName = (payload.given_name || payload.name?.split(" ")[0] || "User").trim();
+    const rawLastName = (
+      payload.family_name ||
+      payload.name?.split(" ").slice(1).join(" ") ||
+      rawFirstName
+    ).trim();
+
+    const firstName = rawFirstName.length >= 2 ? rawFirstName.slice(0, 50) : `${rawFirstName}User`;
+    const lastName = rawLastName.length >= 2 ? rawLastName.slice(0, 50) : `${rawLastName}Account`;
+
     const user = await this.userRepository.createOne({
       data: {
-        firstName: payload.given_name as string,
-        lastName: payload.family_name as string,
+        firstName,
+        lastName,
         email: payload.email as string,
         profilePicture: payload.picture as string,
         emailConfirmedAt: new Date(),
         provider: ProviderEnum.Google,
       },
     });
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to identify Google user in Knock:", err);
+    }
 
     return {
       message: "signed up successfully",

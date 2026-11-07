@@ -48,3 +48,4 @@ export const AWS_ExPIRES_IN = parseInt(process.env.AWS_ExPIRES_IN || "3600");
 // Knock Notifications
 export const KNOCK_API_KEY = process.env.KNOCK_API_KEY as string;
 export const KNOCK_FCM_CHANNEL_ID = process.env.KNOCK_FCM_CHANNEL_ID as string;
+export const KNOCK_IN_APP_CHANNEL_ID = (process.env.KNOCK_IN_APP_CHANNEL_ID || "aae66285-aca5-4ce2-8365-e5c0b9fae5ef") as string;

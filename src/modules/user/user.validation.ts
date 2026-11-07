@@ -31,6 +31,20 @@ export const profileCoverImage = {
   files: z.array(file(fileFieldValidation.image)).min(1).max(5),
 };
 
+// Request body for S3 pre-signed image uploads (profile picture & cover image)
+export const presignedImageSchema = {
+  body: z.strictObject({
+    contentType: z
+      .string("contentType is required")
+      .refine((type) => fileFieldValidation.image.includes(type), "invalid file format"),
+    originalname: z
+      .string("originalname is required")
+      .trim()
+      .min(1, "originalname is required")
+      .max(200, "originalname is too long"),
+  }),
+};
+
 export const profileAttachments = {
   files: z.object({
     firstAttachment: z.array(file(fileFieldValidation.image)).length(1),
@@ -92,6 +106,7 @@ export type ShareProfileDto = z.infer<typeof shareProfile.params>;
 export type TargetUserParamDto = z.infer<typeof targetUserParamSchema.params>;
 export type ProfileImageDto = z.infer<typeof profileImage.file>;
 export type ProfileCoverImageDto = z.infer<typeof profileCoverImage.files>;
+export type PresignedImageDto = z.infer<typeof presignedImageSchema.body>;
 export type ProfileAttachmentsDto = z.infer<typeof profileAttachments.files>;
 export type RestoreAccountDto = z.infer<typeof restoreAccountSchema.body>;
 export type UpdateProfileDto = z.infer<typeof updateProfileSchema.body>;
