@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from "../../common/exceptions";
 import { IPagination, IUser } from "../../common/interfaces";
-import { notificationsService, NotificationsService } from "../../common/services";
+import { notificationsService, NotificationsService, socketService } from "../../common/services";
 import { PaginationDto } from "../../common/validation";
 import { FriendRequestRepository, UserRepository } from "../../DB/repository";
 
@@ -80,6 +80,18 @@ export class FriendsService {
       },
     });
 
+    // Emit real-time socket event to receiver
+    socketService.sendToUser(receiverIdStr, "friend:request_received", {
+      requestId: request._id.toString(),
+      createdAt: (request as any).createdAt || new Date().toISOString(),
+      sender: {
+        _id: sender._id.toString(),
+        firstName: sender.firstName,
+        lastName: sender.lastName,
+        profilePicture: sender.profilePicture,
+      },
+    });
+
     // Notify receiver (best-effort)
     try {
       await this.notificationsService.notifyNewMessage({
@@ -91,7 +103,7 @@ export class FriendsService {
           actorId: sender._id.toString(),
           actorName: `${sender.firstName} ${sender.lastName}`,
           actorAvatar: sender.profilePicture ?? null,
-          actionUrl: "/friends",
+          actionUrl: "/friends?tab=received",
         },
       });
     } catch (err) {
@@ -102,9 +114,10 @@ export class FriendsService {
   }
 
   // Accept incoming friend request
-  public async acceptFriendRequest(user: HydratedDocument<IUser>, requestId: string) {
+  public async acceptFriendRequest(user: HydratedDocument<IUser>, requestId: string | Types.ObjectId) {
+    const requestIdStr = requestId.toString();
     const request = await this.friendRequestRepository.findById({
-      id: requestId,
+      id: requestIdStr,
       options: { lean: false },
     });
 
@@ -152,7 +165,22 @@ export class FriendsService {
 
     // Delete the request document on accept so future state remains clean
     await this.friendRequestRepository.deleteOne({
-      filter: { _id: requestId },
+      filter: { _id: requestIdStr },
+    });
+
+    // Emit real-time socket event to sender and receiver (for multi-tab sync)
+    socketService.sendToUser(senderId, "friend:request_accepted", {
+      requestId: requestIdStr,
+      friend: {
+        _id: user._id.toString(),
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profilePicture: user.profilePicture,
+      },
+    });
+    socketService.sendToUser(user._id.toString(), "friend:request_accepted_self", {
+      requestId: requestIdStr,
+      friendId: senderId,
     });
 
     // Notify sender that request was accepted (best-effort)
@@ -177,8 +205,9 @@ export class FriendsService {
   }
 
   // Reject incoming friend request
-  public async rejectFriendRequest(user: HydratedDocument<IUser>, requestId: string) {
-    const request = await this.friendRequestRepository.findById({ id: requestId });
+  public async rejectFriendRequest(user: HydratedDocument<IUser>, requestId: string | Types.ObjectId) {
+    const requestIdStr = requestId.toString();
+    const request = await this.friendRequestRepository.findById({ id: requestIdStr });
     if (!request) {
       throw new NotFoundException("Friend request not found");
     }
@@ -187,17 +216,28 @@ export class FriendsService {
       throw new ForbiddenException("You are not authorized to reject this friend request");
     }
 
+    const senderId = request.sender.toString();
+
     // Delete the request document
     await this.friendRequestRepository.deleteOne({
-      filter: { _id: requestId },
+      filter: { _id: requestIdStr },
+    });
+
+    socketService.sendToUser(senderId, "friend:request_rejected", {
+      requestId: requestIdStr,
+      receiverId: user._id.toString(),
+    });
+    socketService.sendToUser(user._id.toString(), "friend:request_rejected_self", {
+      requestId: requestIdStr,
     });
 
     return { message: "Friend request rejected successfully" };
   }
 
   // Cancel outgoing friend request
-  public async cancelFriendRequest(user: HydratedDocument<IUser>, requestId: string) {
-    const request = await this.friendRequestRepository.findById({ id: requestId });
+  public async cancelFriendRequest(user: HydratedDocument<IUser>, requestId: string | Types.ObjectId) {
+    const requestIdStr = requestId.toString();
+    const request = await this.friendRequestRepository.findById({ id: requestIdStr });
     if (!request) {
       throw new NotFoundException("Friend request not found");
     }
@@ -206,24 +246,36 @@ export class FriendsService {
       throw new ForbiddenException("You are not authorized to cancel this friend request");
     }
 
+    const receiverId = request.receiver.toString();
+
     // Delete the request document
     await this.friendRequestRepository.deleteOne({
-      filter: { _id: requestId },
+      filter: { _id: requestIdStr },
+    });
+
+    socketService.sendToUser(receiverId, "friend:request_cancelled", {
+      requestId: requestIdStr,
+      senderId: user._id.toString(),
+    });
+    socketService.sendToUser(user._id.toString(), "friend:request_cancelled_self", {
+      requestId: requestIdStr,
     });
 
     return { message: "Friend request cancelled successfully" };
   }
 
   // Remove an existing friend
-  public async removeFriend(user: HydratedDocument<IUser>, friendId: string) {
-    if (user._id.toString() === friendId) {
+  public async removeFriend(user: HydratedDocument<IUser>, friendId: string | Types.ObjectId) {
+    const friendIdStr = friendId.toString();
+
+    if (user._id.toString() === friendIdStr) {
       throw new BadRequestException("You cannot unfriend yourself");
     }
 
-    const friendObjectId = new Types.ObjectId(friendId);
+    const friendObjectId = new Types.ObjectId(friendIdStr);
     const userObjectId = new Types.ObjectId(user._id);
 
-    const friendUser = await this.userRepository.findById({ id: friendId });
+    const friendUser = await this.userRepository.findById({ id: friendIdStr });
     if (!friendUser) {
       throw new NotFoundException("User not found");
     }
@@ -240,7 +292,7 @@ export class FriendsService {
         : String(f),
     );
 
-    const areFriends = userFriendIds.includes(friendId) || targetFriendIds.includes(user._id.toString());
+    const areFriends = userFriendIds.includes(friendIdStr) || targetFriendIds.includes(user._id.toString());
     if (!areFriends) {
       throw new BadRequestException("User is not in your friends list");
     }
@@ -264,6 +316,13 @@ export class FriendsService {
           { sender: friendObjectId, receiver: userObjectId },
         ],
       },
+    });
+
+    socketService.sendToUser(friendIdStr, "friend:removed", {
+      friendId: user._id.toString(),
+    });
+    socketService.sendToUser(user._id.toString(), "friend:removed_self", {
+      friendId: friendIdStr,
     });
 
     return { message: "Friend removed successfully" };

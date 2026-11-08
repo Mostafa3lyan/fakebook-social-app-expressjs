@@ -285,7 +285,17 @@ export class PostService {
 
     // ── post-commit side effects must never fail the request ──
     await this.postHelper.safeDeleteAssets(removedKeys);
-    await this.postHelper.notifyNewlyTagged(post.tags as Types.ObjectId[] | undefined, mentions, user, "post");
+    await this.postHelper.notifyNewlyTagged(
+      post.tags as Types.ObjectId[] | undefined,
+      mentions,
+      user,
+      "post",
+      {
+        entityId: postId,
+        postId,
+        actionUrl: `/?postId=${postId}`,
+      },
+    );
 
     return updatedPost;
   }

@@ -115,20 +115,27 @@ export class CommentService {
     await this.postHelper.notifyNewlyTagged(undefined, mentions, user, "comment", {
       entityId: comment._id.toString(),
       postId: post._id.toString(),
-      actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
+      commentId: comment._id.toString(),
+      ...(parent ? { parentCommentId: parent._id.toString() } : {}),
+      actionUrl: parent
+        ? `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}&parentCommentId=${parent._id.toString()}`
+        : `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
     });
     if (parent) {
       await this.postHelper.notifyAuthor(parent.createdBy, user, "replied to your comment", {
         entityType: "comment",
         entityId: comment._id.toString(),
         postId: post._id.toString(),
-        actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
+        commentId: comment._id.toString(),
+        parentCommentId: parent._id.toString(),
+        actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}&parentCommentId=${parent._id.toString()}`,
       });
     } else {
       await this.postHelper.notifyAuthor(post.createdBy, user, "commented on your post", {
         entityType: "comment",
         entityId: comment._id.toString(),
         postId: post._id.toString(),
+        commentId: comment._id.toString(),
         actionUrl: `/?postId=${post._id.toString()}&commentId=${comment._id.toString()}`,
       });
     }
@@ -279,7 +286,22 @@ export class CommentService {
 
     // ── post-commit side effects must never fail the request ──
     await this.postHelper.safeDeleteAssets(removedKeys);
-    await this.postHelper.notifyNewlyTagged(comment.tags as Types.ObjectId[] | undefined, mentions, user, "comment");
+    const parentIdStr = comment.commentId ? comment.commentId.toString() : undefined;
+    await this.postHelper.notifyNewlyTagged(
+      comment.tags as Types.ObjectId[] | undefined,
+      mentions,
+      user,
+      "comment",
+      {
+        entityId: commentId,
+        postId,
+        commentId,
+        ...(parentIdStr ? { parentCommentId: parentIdStr } : {}),
+        actionUrl: parentIdStr
+          ? `/?postId=${postId}&commentId=${commentId}&parentCommentId=${parentIdStr}`
+          : `/?postId=${postId}&commentId=${commentId}`,
+      },
+    );
 
     return updatedComment;
   }
@@ -326,6 +348,7 @@ export class CommentService {
       });
 
       // Notify comment author (if not self)
+      const parentIdStr = comment.commentId ? comment.commentId.toString() : undefined;
       await this.postHelper.notifyAuthor(
         comment.createdBy,
         user,
@@ -334,7 +357,11 @@ export class CommentService {
           entityType: "comment",
           entityId: commentId,
           postId,
-          actionUrl: `/?postId=${postId}&commentId=${commentId}`,
+          commentId,
+          ...(parentIdStr ? { parentCommentId: parentIdStr } : {}),
+          actionUrl: parentIdStr
+            ? `/?postId=${postId}&commentId=${commentId}&parentCommentId=${parentIdStr}`
+            : `/?postId=${postId}&commentId=${commentId}`,
         },
       );
     }

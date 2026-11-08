@@ -435,6 +435,12 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
       return { twoFactorRequired: true } as ILoginResponse;
     }
 
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to identify user in Knock on login:", err);
+    }
+
     if (fcmToken) {
       await this.notificationsService.sendUserFcmToken(
         user._id.toString(),
@@ -478,6 +484,12 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
       this.redis.twoFaBlockKey(user._id),
       this.redis.twoFaVerifyAttemptsKey(user._id),
     ]);
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to identify user in Knock on loginConfirm:", err);
+    }
 
     return this.tokenService.createLoginCredentials(user, issuer);
   };
@@ -648,6 +660,13 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
     if (!user) {
       throw new NotFoundException("Not registered account");
     }
+
+    try {
+      await this.notificationsService.identifyUser(user);
+    } catch (err) {
+      console.error("Failed to identify Google user in Knock on login:", err);
+    }
+
     return this.tokenService.createLoginCredentials(user, issuer);
   };
 }

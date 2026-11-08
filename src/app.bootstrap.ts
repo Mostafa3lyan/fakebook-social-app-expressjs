@@ -1,3 +1,4 @@
+import http from "node:http";
 import connectDB from "./DB/connection.db";
 import express from "express";
 import type { Express, Request, Response, NextFunction } from "express"
@@ -9,7 +10,7 @@ import { port } from "./config/config.service";
 import { redisService } from "./common/services/redis.service";
 import cors from "cors";
 import { successResponse } from "./common/response";
-import { s3Service } from "./common/services";
+import { s3Service, socketService } from "./common/services";
 import { promisify } from "node:util";
 import { pipeline } from "node:stream";
 import { NotFoundException } from "./common/exceptions";
@@ -83,7 +84,11 @@ const bootstrap = async () => {
 
   await connectDB();
   await redisService.connect();
-  app.listen(port, () => console.log(`Fakebook app listening on port ${port}!`));
+
+  const httpServer = http.createServer(app);
+  socketService.init(httpServer);
+
+  httpServer.listen(port, () => console.log(`Fakebook app (HTTP + Socket.io) listening on port ${port}!`));
 
 }
 
