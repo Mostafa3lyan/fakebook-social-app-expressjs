@@ -1,125 +1,113 @@
-// import { Router, Response, NextFunction } from "express";
-// import {
-//   BadRequestException,
-//   successResponse,
-// } from "./../../common/utils/response/index.js";
-// import {
-//   deleteMessage,
-//   getAllMessages,
-//   getMessage,
-//   sendMessage,
-// } from "./message.service.js";
-// import {
-//   decodeToken,
-//   fileFieldValidation,
-//   localFileUpload,
-// } from "../../common/utils/index.js";
-// import { validation } from "../../middleware/validation.middleware.js";
-// import * as validators from "./message.validation.js";
-// import { TokenTypeEnum } from "../../common/enums/security.enum.js";
-// import { authentication } from "../../middleware/auth.middleware.js";
+import { Router, type Request, type Response } from "express";
+import { successResponse } from "../../common/response";
+import { cloudFileUpload, fileFieldValidation } from "../../common/utils/multer";
+import { authentication, validation } from "../../middleware";
+import { messageService } from "./message.service";
+import * as validators from "./message.validation";
 
-// export class MessageController {
-//   router = Router({ caseSensitive: true, strict: true });
+// Mounted at /conversation/:conversationId/messages — mergeParams exposes :conversationId
+const router = Router({ mergeParams: true });
 
-//   constructor() {
-//     this.initializeRoutes();
-//   }
+const allowedChatMimetypes = [
+  ...fileFieldValidation.image,
+  ...fileFieldValidation.document,
+];
 
-//   initializeRoutes() {
-//     // send message
-//     this.router.post(
-//       "/:receiverId",
-//       async (req: any, res: Response, next: NextFunction) => {
-//         try {
-//           if (req.headers.authorization) {
-//             const { user, decoded } = await decodeToken({
-//               token: req.headers.authorization.split(" ")[1],
-//               tokenType: TokenTypeEnum.access,
-//             });
+// 1. Get messages history
+router.get(
+  "/",
+  authentication(),
+  validation(validators.getMessagesSchema),
+  async (req: Request, res: Response) => {
+    const data = await messageService.getMessages(
+      req.user,
+      req.params.conversationId as string,
+      req.query as validators.GetMessagesQueryDto,
+    );
+    return successResponse({
+      res,
+      data,
+    });
+  },
+);
 
-//             req.user = user;
-//             req.decoded = decoded;
-//           }
-//           next();
-//         } catch (err) {
-//           next(err);
-//         }
-//       },
-//       localFileUpload({
-//         validation: fileFieldValidation.image,
-//         customPath: "Messages",
-//         maxSize: 1,
-//       }).array("attachments", 2),
-//       validation(validators.sendMessageSchema),
-//       async (req: any, res: Response, next: NextFunction) => {
-//         try {
-//           if (!req.body?.content && !req.files?.length) {
-//             throw BadRequestException({
-//               message:
-//                 "At least one of content or attachments is required to send a message",
-//               extra: {
-//                 key: "body",
-//                 path: ["content"],
-//                 message: "content is required",
-//               },
-//             });
-//           }
-//           const message = await sendMessage(
-//             req.params.receiverId,
-//             req.body,
-//             req.files as any[],
-//             req.user,
-//           );
+// 2. Send message
+router.post(
+  "/",
+  authentication(),
+  cloudFileUpload({ validation: allowedChatMimetypes }).array("attachments", 5),
+  validation(validators.sendMessageSchema),
+  async (req: Request, res: Response) => {
+    const message = await messageService.sendMessage(
+      req.user,
+      req.params.conversationId as string,
+      req.body as validators.SendMessageBodyDto,
+      req.files as Express.Multer.File[],
+    );
+    return successResponse({
+      res,
+      status: 201,
+      data: { message },
+    });
+  },
+);
 
-//           return successResponse({ res, status: 201, data: message });
-//         } catch (err) {
-//           next(err);
-//         }
-//       },
-//     );
+// 3. Edit message
+router.patch(
+  "/:messageId",
+  authentication(),
+  validation(validators.editMessageSchema),
+  async (req: Request, res: Response) => {
+    const message = await messageService.editMessage(
+      req.user,
+      req.params.conversationId as string,
+      req.params.messageId as string,
+      req.body.content as string,
+    );
+    return successResponse({
+      res,
+      data: { message },
+    });
+  },
+);
 
-//     // get message
-//     this.router.get(
-//       "/:messageId",
-//       authentication(),
-//       validation(validators.getMessagesSchema),
-//       async (req: any, res: Response, next: NextFunction) => {
-//         try {
-//           const message = await getMessage(req.params.messageId, req.user);
-//           return successResponse({ res, data: message });
-//         } catch (err) {
-//           next(err);
-//         }
-//       },
-//     );
+// 4. Delete / unsend message
+router.delete(
+  "/:messageId",
+  authentication(),
+  validation(validators.deleteMessageSchema),
+  async (req: Request, res: Response) => {
+    const result = await messageService.deleteMessage(
+      req.user,
+      req.params.conversationId as string,
+      req.params.messageId as string,
+      req.query.mode as "everyone" | "self" | undefined,
+    );
+    return successResponse({
+      res,
+      message: result.message,
+      data: { mode: result.mode },
+    });
+  },
+);
 
-//     // get all messages
-//     this.router.get("/", authentication(), async (req: any, res: Response, next: NextFunction) => {
-//       try {
-//         const message = await getAllMessages(req.user);
-//         return successResponse({ res, data: message });
-//       } catch (err) {
-//         next(err);
-//       }
-//     });
+// 5. Mark conversation messages as read
+router.post(
+  "/read",
+  authentication(),
+  validation(validators.markReadSchema),
+  async (req: Request, res: Response) => {
+    const result = await messageService.markAsRead(
+      req.user,
+      req.params.conversationId as string,
+      req.body.lastMessageId as string | undefined,
+    );
+    return successResponse({
+      res,
+      message: result.message,
+      data: { readAt: result.readAt },
+    });
+  },
+);
 
-//     // delete message
-//     this.router.delete(
-//       "/:messageId",
-//       authentication(),
-//       validation(validators.getMessagesSchema),
-//       async (req: any, res: Response, next: NextFunction) => {
-//         try {
-//           const message = await deleteMessage(req.params.messageId, req.user);
-//           return successResponse({ res, data: message });
-//         } catch (err) {
-//           next(err);
-//         }
-//       },
-//     );
-//   }
-// }
-
-// export const messageController = new MessageController();
-// export default messageController.router;
+export default router;

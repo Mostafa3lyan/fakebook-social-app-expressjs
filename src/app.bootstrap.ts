@@ -2,7 +2,7 @@ import http from "node:http";
 import connectDB from "./DB/connection.db";
 import express from "express";
 import type { Express, Request, Response, NextFunction } from "express"
-import { authRouter, userRouter, notificationsRouter, postRouter, commentRouter, friendsRouter } from "./modules";
+import { authRouter, userRouter, notificationsRouter, postRouter, commentRouter, friendsRouter, conversationRouter, messageRouter } from "./modules";
 import { createHandler } from "graphql-http/lib/use/express";
 import { schema, graphQLContext, type GraphQLContext, depthLimit } from "./modules/graphql";
 import { authentication, globalErrorHandler } from "./middleware";
@@ -36,7 +36,8 @@ const bootstrap = async () => {
   app.use("/friends", friendsRouter);
   app.use("/post/:postId/comment", commentRouter);
   app.use("/post", postRouter);
-  // app.use("/message", messageRouter);
+  app.use("/conversation/:conversationId/messages", messageRouter);
+  app.use("/conversation", conversationRouter);
 
 
   app.get("/", async (req: Request, res: Response, next: NextFunction): Promise<void> => {

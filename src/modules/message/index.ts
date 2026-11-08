@@ -1,1 +1,4 @@
-// export { default as messageRouter } from "./message.controller.js";
+import messageRouter from "./message.controller";
+export { messageRouter };
+export * from "./message.service";
+export * from "./message.validation";

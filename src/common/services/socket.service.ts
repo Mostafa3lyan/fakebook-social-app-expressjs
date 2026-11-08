@@ -1,9 +1,10 @@
 import type { Server as HttpServer } from "node:http";
 import { Server as SocketIOServer, type Socket } from "socket.io";
-import { HydratedDocument } from "mongoose";
+import { HydratedDocument, Types } from "mongoose";
 import { TokenTypeEnum } from "../enums";
 import { IUser } from "../interfaces";
 import { tokenService } from "./token.service";
+import { ConversationModel } from "../../DB/models/conversation.model";
 
 export interface AuthenticatedSocket extends Socket {
   data: {
@@ -20,6 +21,8 @@ function parseCookieValue(cookieHeader: string | undefined, name: string): strin
 
 export class SocketService {
   private io: SocketIOServer | null = null;
+  // Multi-tab / multi-device presence tracking: maps userId -> Set of active socket IDs
+  private userConnections: Map<string, Set<string>> = new Map();
 
   public init(httpServer: HttpServer): SocketIOServer {
     this.io = new SocketIOServer(httpServer, {
@@ -64,16 +67,144 @@ export class SocketService {
 
     this.io.on("connection", (socket: Socket) => {
       const userId = socket.data.userId as string | undefined;
-      if (!userId) {
+      const user = socket.data.user as HydratedDocument<IUser> | undefined;
+      if (!userId || !user) {
         socket.disconnect(true);
         return;
       }
 
+      // 1. Join user's personal room
       const userRoom = `user:${userId}`;
       socket.join(userRoom);
 
+      // 2. Track connection for presence
+      if (!this.userConnections.has(userId)) {
+        this.userConnections.set(userId, new Set());
+      }
+      const sockets = this.userConnections.get(userId)!;
+      const wasOffline = sockets.size === 0;
+      sockets.add(socket.id);
+
+      if (wasOffline) {
+        // User came online — emit presence
+        this.io?.emit("user:presence", {
+          userId,
+          status: "online",
+        });
+      }
+
+      // 3. Conversation room authorization: Join conversation room
+      socket.on(
+        "chat:join_conversation",
+        async (
+          data: { conversationId: string },
+          callback?: (res: { success: boolean; error?: string }) => void,
+        ) => {
+          try {
+            const { conversationId } = data || {};
+            if (!conversationId || !Types.ObjectId.isValid(conversationId)) {
+              callback?.({ success: false, error: "Invalid conversation ID" });
+              return;
+            }
+
+            const isParticipant = await ConversationModel.exists({
+              _id: conversationId,
+              "participants.user": new Types.ObjectId(userId),
+            });
+
+            if (!isParticipant) {
+              callback?.({
+                success: false,
+                error: "Unauthorized: You are not a participant in this conversation",
+              });
+              return;
+            }
+
+            const roomName = `conversation:${conversationId}`;
+            socket.join(roomName);
+            callback?.({ success: true });
+          } catch (err) {
+            callback?.({
+              success: false,
+              error: err instanceof Error ? err.message : "Failed to join conversation",
+            });
+          }
+        },
+      );
+
+      // 4. Leave conversation room
+      socket.on("chat:leave_conversation", (data: { conversationId: string }) => {
+        const { conversationId } = data || {};
+        if (conversationId) {
+          socket.leave(`conversation:${conversationId}`);
+        }
+      });
+
+      // 5. Typing start
+      socket.on("chat:typing_start", (data: { conversationId: string }) => {
+        const { conversationId } = data || {};
+        if (conversationId && Types.ObjectId.isValid(conversationId)) {
+          socket.to(`conversation:${conversationId}`).emit("chat:typing", {
+            conversationId,
+            userId,
+            isTyping: true,
+            user: {
+              _id: userId,
+              firstName: user.firstName,
+              lastName: user.lastName,
+            },
+          });
+        }
+      });
+
+      // 6. Typing stop
+      socket.on("chat:typing_stop", (data: { conversationId: string }) => {
+        const { conversationId } = data || {};
+        if (conversationId && Types.ObjectId.isValid(conversationId)) {
+          socket.to(`conversation:${conversationId}`).emit("chat:typing", {
+            conversationId,
+            userId,
+            isTyping: false,
+            user: {
+              _id: userId,
+              firstName: user.firstName,
+              lastName: user.lastName,
+            },
+          });
+        }
+      });
+
+      // 7. Delivery acknowledgment
+      socket.on(
+        "chat:mark_delivered",
+        (data: { conversationId: string; messageIds: string[] }) => {
+          const { conversationId, messageIds } = data || {};
+          if (conversationId && Array.isArray(messageIds) && messageIds.length > 0) {
+            socket.to(`conversation:${conversationId}`).emit("chat:message_delivered", {
+              conversationId,
+              messageIds,
+              userId,
+              deliveredAt: new Date().toISOString(),
+            });
+          }
+        },
+      );
+
+      // 8. Disconnect handling
       socket.on("disconnect", () => {
-        // Room cleanup is handled automatically by Socket.io
+        const userSockets = this.userConnections.get(userId);
+        if (userSockets) {
+          userSockets.delete(socket.id);
+          if (userSockets.size === 0) {
+            this.userConnections.delete(userId);
+            // User went offline — broadcast presence
+            this.io?.emit("user:presence", {
+              userId,
+              status: "offline",
+              lastSeenAt: new Date().toISOString(),
+            });
+          }
+        }
       });
     });
 
@@ -82,6 +213,11 @@ export class SocketService {
 
   public getIO(): SocketIOServer | null {
     return this.io;
+  }
+
+  public isUserOnline(userId: string): boolean {
+    const sockets = this.userConnections.get(userId);
+    return Boolean(sockets && sockets.size > 0);
   }
 
   public sendToUser(userId: string, event: string, payload: unknown): void {
@@ -94,7 +230,11 @@ export class SocketService {
     const rooms = userIds.map((id) => `user:${id.toString()}`);
     this.io.to(rooms).emit(event, payload);
   }
+
+  public sendToConversation(conversationId: string, event: string, payload: unknown): void {
+    if (!this.io || !conversationId) return;
+    this.io.to(`conversation:${conversationId.toString()}`).emit(event, payload);
+  }
 }
 
 export const socketService = new SocketService();
-
