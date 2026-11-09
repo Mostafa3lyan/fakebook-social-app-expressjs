@@ -17,7 +17,7 @@ import { NotFoundException } from "./common/exceptions";
 
 const s3WriteStream = promisify(pipeline);
 
-const bootstrap = async () => {
+export const createApp = (): Express => {
   const app: Express = express();
 
   app.use(express.json(), cors());
@@ -82,6 +82,12 @@ const bootstrap = async () => {
 
   // error-handling
   app.use(globalErrorHandler);
+
+  return app;
+};
+
+const bootstrap = async () => {
+  const app = createApp();
 
   await connectDB();
   await redisService.connect();

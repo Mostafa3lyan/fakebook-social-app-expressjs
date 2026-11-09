@@ -1,9 +1,12 @@
 import { resolve } from "node:path";
-import { config } from "dotenv";
+import dotenv from "dotenv";
 
-export const NODE_ENV = process.env.NODE_ENV as "development" | "production";
+export const NODE_ENV = (process.env.NODE_ENV || "development") as "development" | "production";
 
-config({ path: resolve(`./.env.${NODE_ENV}`) });
+const loadEnv = dotenv?.config || (dotenv as any)?.default?.config;
+if (typeof loadEnv === "function") {
+  loadEnv({ path: resolve(`./.env.${NODE_ENV}`) });
+}
 
 export const port = process.env.PORT ?? 7000;
 

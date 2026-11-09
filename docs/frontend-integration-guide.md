@@ -2156,3 +2156,54 @@ The frontend implementation will be deemed complete and verified when:
 - [ ] Add empty states for feed, comments, and search.
 - [ ] Add shimmer skeleton loaders for cards and comments.
 - [ ] Verify complete E2E workflow against running backend.
+
+
+---
+
+## 15. Messenger-Style Real-Time Chat Integration Guide
+
+### 15.1 Architectural Overview
+The chat system is modeled after Facebook Messenger:
+1. **Persistent Omnipresent Experience:** Integrated into the application shell via floating side-by-side chat windows and floating minimized bubbles without navigating away from the current page.
+2. **Dual Conversation Topologies:** Supports both 1-on-1 direct messaging and multi-user group conversations with administrator controls.
+3. **Non-Friend "Message Requests" Gate:** Conversations initiated between non-friends enter the `request` status. The recipient must accept or decline before standard bi-directional notifications occur.
+4. **Real-Time Layer:** Powered by Socket.IO with multi-tab connection tracking, delivery acknowledgments, read receipts, and debounced typing indicators.
+
+### 15.2 REST Endpoints Reference
+
+#### Conversations (`/conversation`)
+- `POST /conversation/direct/:recipientId` — Get or create 1-on-1 conversation.
+- `POST /conversation/group` — Create a group conversation (`{ title, participantIds }`).
+- `GET /conversation` — List active inbox conversations with dynamic `unreadCount`, pagination, and search.
+- `GET /conversation/requests` — List pending non-friend message requests.
+- `PATCH /conversation/:conversationId/accept-request` — Accept a message request.
+- `PATCH /conversation/:conversationId/reject-request` — Decline a message request.
+- `GET /conversation/:conversationId` — Retrieve single conversation details.
+- `PATCH /conversation/:conversationId` — Update group title or avatar (Admin only).
+- `POST /conversation/:conversationId/members` — Add members to group (Admin only).
+- `DELETE /conversation/:conversationId/members/:memberId` — Remove member or leave group.
+- `DELETE /conversation/:conversationId?disband=true` — Hide conversation for user or disband group (Admin only).
+
+#### Messages (`/conversation/:conversationId/messages`)
+- `GET /conversation/:conversationId/messages?before=:id&limit=50` — Cursor-paginated message history.
+- `POST /conversation/:conversationId/messages` — Send message with optional `attachments` (multipart/form-data) and `clientTempId`.
+- `PATCH /conversation/:conversationId/messages/:messageId` — Edit message content (author only, adds `isEdited: true`).
+- `DELETE /conversation/:conversationId/messages/:messageId?mode=everyone|self` — "Unsend for everyone" tombstone vs "Remove for you" local hide.
+- `POST /conversation/:conversationId/read` — Mark all messages in conversation as read.
+
+### 15.3 Socket.IO Events Reference
+
+| Event Name | Direction | Payload | Description |
+| :--- | :---: | :--- | :--- |
+| `chat:join_conversation` | Client -> Server | `{ conversationId }` | Authorizes membership and joins the conversation room. |
+| `chat:leave_conversation`| Client -> Server | `{ conversationId }` | Leaves the conversation room. |
+| `chat:typing_start` | Client -> Server | `{ conversationId }` | Emits typing state to other participants. |
+| `chat:typing_stop` | Client -> Server | `{ conversationId }` | Clears typing state. |
+| `chat:typing` | Server -> Client | `{ conversationId, userId, isTyping, user }` | Real-time typing notification. |
+| `chat:new_message` | Server -> Client | `{ conversationId, message, clientTempId }` | Broadcast to conversation room and recipients' personal rooms. |
+| `chat:mark_delivered` | Client -> Server | `{ conversationId, messageIds }` | Client acknowledges delivery of received messages. |
+| `chat:message_delivered` | Server -> Client | `{ conversationId, messageIds, userId }` | Emitted when message is delivered to recipient. |
+| `chat:message_read` | Server -> Client | `{ conversationId, readerId, readAt }` | Emitted when recipient reads the conversation. |
+| `chat:message_edited` | Server -> Client | `{ conversationId, messageId, content, isEdited, editedAt }` | Live message edit broadcast. |
+| `chat:message_deleted` | Server -> Client | `{ conversationId, messageId, deleteMode }` | Live message unsend broadcast. |
+| `user:presence` | Server -> Client | `{ userId, status: "online" \| "offline" }` | Multi-tab presence broadcast without flapping. |

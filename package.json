@@ -5,6 +5,8 @@
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "start:dev": "cross-env NODE_ENV=development concurrently \"tsc --watch\" \"node --watch dist/main.js\"",
     "start:prod": "cross-env NODE_ENV=production concurrently \"tsc --watch\" \"node --watch dist/main.js\""
   },
@@ -23,8 +25,11 @@
     "@types/node": "^25.9.2",
     "@types/nodemailer": "^8.0.1",
     "@types/redis": "^4.0.10",
+    "@types/supertest": "^7.2.1",
     "concurrently": "^10.0.3",
-    "typescript": "^5.8.2"
+    "supertest": "^7.3.2",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1117.0",

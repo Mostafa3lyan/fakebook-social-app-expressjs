@@ -50,6 +50,28 @@ export const ReactionTypeEnumType = new GraphQLEnumType({
   },
 });
 
+export const PostReactionType = new GraphQLObjectType({
+  name: "PostReaction",
+  description: "User reaction entry on a post",
+  fields: () => ({
+    reactionType: { type: new GraphQLNonNull(ReactionTypeEnumType) },
+    createdBy: {
+      type: new GraphQLNonNull(GraphQLID),
+      resolve: (r: any) => {
+        if (!r?.createdBy) return "";
+        return typeof r.createdBy === "object" && "_id" in r.createdBy
+          ? r.createdBy._id.toString()
+          : r.createdBy.toString();
+      },
+    },
+    createdAt: {
+      type: GraphQLString,
+      resolve: (r: any) =>
+        r?.createdAt instanceof Date ? r.createdAt.toISOString() : r?.createdAt,
+    },
+  }),
+});
+
 export const PostLocationType = new GraphQLObjectType({
   name: "PostLocation",
   description: "Location attached to a post",
@@ -168,6 +190,10 @@ export const PostType: GraphQLObjectType = new GraphQLObjectType({
       },
     },
     location: { type: PostLocationType },
+    reactions: {
+      type: new GraphQLList(new GraphQLNonNull(PostReactionType)),
+      resolve: (post: PostSource) => (post as any)?.reactions ?? [],
+    },
     reactionsCount: { type: GraphQLInt },
     reactionsBreakdown: { type: ReactionsBreakdownType },
     commentsCount: { type: GraphQLInt },
