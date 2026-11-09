@@ -27,6 +27,7 @@ import { StorageApproachEnum, UploadApproachEnum } from "../enums";
 import { createReadStream } from "node:fs";
 import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { detectBufferMimeType, sanitizeFileName } from "../utils/multer";
 
 export class S3Service {
   private client: S3Client;
@@ -55,15 +56,30 @@ export class S3Service {
     ACL?: ObjectCannedACL;
     contentType?: string | undefined;
   }): Promise<string> {
+    const safeName = sanitizeFileName(file.originalname);
+    let effectiveContentType = file.mimetype || contentType;
+
+    if (file.buffer) {
+      const detected = detectBufferMimeType(file.buffer);
+      if (file.mimetype && file.mimetype.startsWith("image/")) {
+        if (!detected || !detected.startsWith("image/")) {
+          throw new BadRequestException("Uploaded file content does not match a valid image format");
+        }
+      }
+      if (detected) {
+        effectiveContentType = detected;
+      }
+    }
+
     const command = new PutObjectCommand({
       Bucket: bucket,
-      Key: `${APP_NAME}/${path}/${randomUUID()}__${file.originalname}`,
+      Key: `${APP_NAME}/${path}/${randomUUID()}__${safeName}`,
       ACL,
       Body:
         storageApproach === StorageApproachEnum.MEMORY
           ? file.buffer
           : createReadStream(file.path),
-      ContentType: file.mimetype || contentType,
+      ContentType: effectiveContentType,
     });
 
     if (!command.input.Key) {
@@ -92,17 +108,32 @@ export class S3Service {
     contentType?: string | undefined;
     partSize?: number;
   }): Promise<CompleteMultipartUploadCommandOutput> {
+    const safeName = sanitizeFileName(file.originalname);
+    let effectiveContentType = file.mimetype || contentType;
+
+    if (file.buffer) {
+      const detected = detectBufferMimeType(file.buffer);
+      if (file.mimetype && file.mimetype.startsWith("image/")) {
+        if (!detected || !detected.startsWith("image/")) {
+          throw new BadRequestException("Uploaded file content does not match a valid image format");
+        }
+      }
+      if (detected) {
+        effectiveContentType = detected;
+      }
+    }
+
     const uploadFile = new Upload({
       client: this.client,
       params: {
         Bucket: bucket,
-        Key: `${APP_NAME}/${path}/${randomUUID()}__${file.originalname}`,
+        Key: `${APP_NAME}/${path}/${randomUUID()}__${safeName}`,
         ACL,
         Body:
           storageApproach === StorageApproachEnum.MEMORY
             ? file.buffer
             : createReadStream(file.path),
-        ContentType: file.mimetype || contentType,
+        ContentType: effectiveContentType,
       },
       partSize: 1024 * 1024 * partSize, // 5 MB
       leavePartsOnError: false,
@@ -183,9 +214,10 @@ export class S3Service {
     contentType?: string;
     originalname: string;
   }): Promise<{ url: string; key: string }> {
+    const safeName = sanitizeFileName(originalname);
     const command = new PutObjectCommand({
       Bucket: bucket,
-      Key: `${APP_NAME}/${path}/${randomUUID()}__${originalname}`,
+      Key: `${APP_NAME}/${path}/${randomUUID()}__${safeName}`,
       ContentType: contentType,
     });
 
@@ -228,12 +260,13 @@ export class S3Service {
     fileName?: string;
     download?: string;
   }): Promise<string> {
+    const safeName = fileName ? sanitizeFileName(fileName) : undefined;
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: key,
       ResponseContentDisposition:
         download === "true"
-          ? `attachment; filename="${fileName || key.split("/").pop()}"`
+          ? `attachment; filename="${safeName || key.split("/").pop()}"`
           : undefined,
     });
 

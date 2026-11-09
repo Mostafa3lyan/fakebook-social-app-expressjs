@@ -37,6 +37,7 @@ import {
   targetUserParamSchema,
 } from "../../src/modules/user/user.validation";
 import { paginationValidationSchema } from "../../src/common/validation";
+import { detectBufferMimeType, sanitizeFileName } from "../../src/common/utils/multer";
 import { MessageDeleteModeEnum, GenderEnum } from "../../src/common/enums";
 
 describe("Backend Validation Schemas (Zod)", () => {
@@ -280,6 +281,53 @@ describe("Backend Validation Schemas (Zod)", () => {
         limit: "10",
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe("File Upload & Asset Security (VULN-BE-09, VULN-BE-10)", () => {
+    it("should sanitize filenames with directory traversal and control characters", () => {
+      expect(sanitizeFileName("../../secret/passwords.txt")).not.toContain("../");
+      expect(sanitizeFileName("foo\\bar/baz.png")).toBe("foo_bar_baz.png");
+      expect(sanitizeFileName("malicious\r\nheader.png")).toBe("maliciousheader.png");
+      expect(sanitizeFileName("   avatar.jpeg   ")).toBe("avatar.jpeg");
+      expect(sanitizeFileName("")).toBe("file");
+    });
+
+    it("should correctly detect JPEG magic bytes", () => {
+      const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+      expect(detectBufferMimeType(jpegBuffer)).toBe("image/jpeg");
+    });
+
+    it("should correctly detect PNG magic bytes", () => {
+      const pngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      expect(detectBufferMimeType(pngBuffer)).toBe("image/png");
+    });
+
+    it("should correctly detect GIF magic bytes", () => {
+      const gifBuffer = Buffer.from("GIF89a...");
+      expect(detectBufferMimeType(gifBuffer)).toBe("image/gif");
+    });
+
+    it("should correctly detect WebP magic bytes", () => {
+      const webpBuffer = Buffer.concat([
+        Buffer.from("RIFF"),
+        Buffer.from([0x00, 0x00, 0x00, 0x00]),
+        Buffer.from("WEBP"),
+      ]);
+      expect(detectBufferMimeType(webpBuffer)).toBe("image/webp");
+    });
+
+    it("should correctly detect PDF magic bytes", () => {
+      const pdfBuffer = Buffer.from("%PDF-1.7...");
+      expect(detectBufferMimeType(pdfBuffer)).toBe("application/pdf");
+    });
+
+    it("should reject non-image disguised payload (HTML, JS, shell)", () => {
+      const htmlBuffer = Buffer.from("<script>alert(1)</script>");
+      expect(detectBufferMimeType(htmlBuffer)).toBeNull();
+
+      const shBuffer = Buffer.from("#!/bin/bash\nrm -rf /");
+      expect(detectBufferMimeType(shBuffer)).toBeNull();
     });
   });
 });

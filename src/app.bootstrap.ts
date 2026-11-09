@@ -11,6 +11,7 @@ import { redisService } from "./common/services/redis.service";
 import cors from "cors";
 import { successResponse } from "./common/response";
 import { s3Service, socketService } from "./common/services";
+import { sanitizeFileName } from "./common/utils/multer";
 import { promisify } from "node:util";
 import { pipeline } from "node:stream";
 import { NotFoundException } from "./common/exceptions";
@@ -58,9 +59,11 @@ export const createApp = (): Express => {
       "Content-Type",
       ContentType || "application/octet-stream"
     );
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.set("Cross-Origin-Resource-Policy", "cross-origin");
     if (download === "true") {
-      res.setHeader("Content-Disposition", `attachment; filename="${fileName || key.split("/").pop()}"`);
+      const safeName = sanitizeFileName(String(fileName || key.split("/").pop() || "download"));
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
     }
 
     return await s3WriteStream(Body as NodeJS.ReadableStream, res);
@@ -70,7 +73,8 @@ export const createApp = (): Express => {
     const { download, fileName } = req.query as { download: string, fileName: string };
     const path = req.params.path as string[];
     const key = path.join("/");
-    const url = await s3Service.getPreSignedUrl({ key, download, fileName });
+    const safeName = fileName ? sanitizeFileName(String(fileName)) : undefined;
+    const url = await s3Service.getPreSignedUrl({ key, download, fileName: safeName });
 
     return successResponse({ res, data: { url } });
   })
