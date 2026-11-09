@@ -36,6 +36,7 @@ import {
 import {
   targetUserParamSchema,
 } from "../../src/modules/user/user.validation";
+import { paginationValidationSchema } from "../../src/common/validation";
 import { MessageDeleteModeEnum, GenderEnum } from "../../src/common/enums";
 
 describe("Backend Validation Schemas (Zod)", () => {
@@ -251,6 +252,34 @@ describe("Backend Validation Schemas (Zod)", () => {
         before: new Types.ObjectId().toString(),
       });
       expect(valid.success).toBe(true);
+    });
+
+    it("should accept valid pagination query within bounds", () => {
+      const valid = paginationValidationSchema.query.safeParse({
+        page: "2",
+        limit: "25",
+      });
+      expect(valid.success).toBe(true);
+      if (valid.success) {
+        expect(valid.data.page).toBe(2);
+        expect(valid.data.limit).toBe(25);
+      }
+    });
+
+    it("should reject pagination query when limit exceeds 50 (DoS prevention)", () => {
+      const result = paginationValidationSchema.query.safeParse({
+        page: "1",
+        limit: "100",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("should reject pagination query when page is less than 1", () => {
+      const result = paginationValidationSchema.query.safeParse({
+        page: "0",
+        limit: "10",
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

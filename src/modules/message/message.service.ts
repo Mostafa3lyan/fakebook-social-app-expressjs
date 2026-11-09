@@ -232,6 +232,15 @@ export class MessageService {
     messageId: string,
     content: string,
   ) {
+    const conversation = await ConversationModel.findOne({
+      _id: conversationId,
+      "participants.user": currentUser._id,
+    });
+
+    if (!conversation) {
+      throw new NotFoundException("Conversation not found");
+    }
+
     const message = await MessageModel.findOne({
       _id: messageId,
       conversationId,
@@ -278,6 +287,15 @@ export class MessageService {
     messageId: string,
     mode: "everyone" | "self" = "everyone",
   ) {
+    const conversation = await ConversationModel.findOne({
+      _id: conversationId,
+      "participants.user": currentUser._id,
+    });
+
+    if (!conversation) {
+      throw new NotFoundException("Conversation not found");
+    }
+
     const message = await MessageModel.findOne({
       _id: messageId,
       conversationId,

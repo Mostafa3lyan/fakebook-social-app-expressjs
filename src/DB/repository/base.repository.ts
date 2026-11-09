@@ -432,7 +432,7 @@ export abstract class DatabaseRepository<TRawDoc> {
 
     const isPaginated = page !== undefined;
     const safePage = isPaginated ? Math.max(1, page) : undefined;
-    const safeLimit = isPaginated ? Math.max(1, limit ?? 10) : undefined;
+    const safeLimit = isPaginated ? Math.min(50, Math.max(1, limit ?? 10)) : undefined;
     const skip = isPaginated ? (safePage! - 1) * safeLimit! : undefined;
 
     let query = this.model.find(filter, this.resolveProjection(projection), resolvedOptions);

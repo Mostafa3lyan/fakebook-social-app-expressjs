@@ -55,11 +55,11 @@ export const file = (allowedMimetypes: string[]) =>
 
 export const paginationValidationSchema = {
   query: z.strictObject({
-    page: z.coerce.number().optional(),
-    limit: z.coerce.number().optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
     search: z.string().optional(),
   }),
-}
+};
 
 
 export type PaginationDto = z.infer<typeof paginationValidationSchema.query>;

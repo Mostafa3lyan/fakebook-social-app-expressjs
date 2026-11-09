@@ -5,6 +5,7 @@ import { TokenTypeEnum } from "../enums";
 import { IUser } from "../interfaces";
 import { tokenService } from "./token.service";
 import { ConversationModel } from "../../DB/models/conversation.model";
+import { CLIENT_URL } from "../../config/config.service";
 
 export interface AuthenticatedSocket extends Socket {
   data: {
@@ -27,8 +28,18 @@ export class SocketService {
   public init(httpServer: HttpServer): SocketIOServer {
     this.io = new SocketIOServer(httpServer, {
       cors: {
-        origin: true,
+        origin: CLIENT_URL ? [CLIENT_URL] : true,
         credentials: true,
+      },
+      allowRequest: (req, callback) => {
+        const origin = req.headers.origin;
+        if (!origin) {
+          return callback(null, true);
+        }
+        if (CLIENT_URL && origin !== CLIENT_URL) {
+          return callback("Cross-origin connection denied", false);
+        }
+        callback(null, true);
       },
       pingTimeout: 60000,
       pingInterval: 25000,
@@ -86,11 +97,14 @@ export class SocketService {
       sockets.add(socket.id);
 
       if (wasOffline) {
-        // User came online — emit presence
-        this.io?.emit("user:presence", {
-          userId,
-          status: "online",
-        });
+        // User came online — emit presence to confirmed friends only
+        const friendIds = (user.friends || []).map((id) => id.toString());
+        if (friendIds.length > 0) {
+          this.sendToUsers(friendIds, "user:presence", {
+            userId,
+            status: "online",
+          });
+        }
       }
 
       // 3. Conversation room authorization: Join conversation room
@@ -143,7 +157,11 @@ export class SocketService {
       // 5. Typing start
       socket.on("chat:typing_start", (data: { conversationId: string }) => {
         const { conversationId } = data || {};
-        if (conversationId && Types.ObjectId.isValid(conversationId)) {
+        if (
+          conversationId &&
+          Types.ObjectId.isValid(conversationId) &&
+          socket.rooms.has(`conversation:${conversationId}`)
+        ) {
           socket.to(`conversation:${conversationId}`).emit("chat:typing", {
             conversationId,
             userId,
@@ -160,7 +178,11 @@ export class SocketService {
       // 6. Typing stop
       socket.on("chat:typing_stop", (data: { conversationId: string }) => {
         const { conversationId } = data || {};
-        if (conversationId && Types.ObjectId.isValid(conversationId)) {
+        if (
+          conversationId &&
+          Types.ObjectId.isValid(conversationId) &&
+          socket.rooms.has(`conversation:${conversationId}`)
+        ) {
           socket.to(`conversation:${conversationId}`).emit("chat:typing", {
             conversationId,
             userId,
@@ -179,7 +201,13 @@ export class SocketService {
         "chat:mark_delivered",
         (data: { conversationId: string; messageIds: string[] }) => {
           const { conversationId, messageIds } = data || {};
-          if (conversationId && Array.isArray(messageIds) && messageIds.length > 0) {
+          if (
+            conversationId &&
+            Types.ObjectId.isValid(conversationId) &&
+            socket.rooms.has(`conversation:${conversationId}`) &&
+            Array.isArray(messageIds) &&
+            messageIds.length > 0
+          ) {
             socket.to(`conversation:${conversationId}`).emit("chat:message_delivered", {
               conversationId,
               messageIds,
@@ -197,12 +225,15 @@ export class SocketService {
           userSockets.delete(socket.id);
           if (userSockets.size === 0) {
             this.userConnections.delete(userId);
-            // User went offline — broadcast presence
-            this.io?.emit("user:presence", {
-              userId,
-              status: "offline",
-              lastSeenAt: new Date().toISOString(),
-            });
+            // User went offline — broadcast presence to confirmed friends only
+            const friendIds = (user.friends || []).map((id) => id.toString());
+            if (friendIds.length > 0) {
+              this.sendToUsers(friendIds, "user:presence", {
+                userId,
+                status: "offline",
+                lastSeenAt: new Date().toISOString(),
+              });
+            }
           }
         }
       });

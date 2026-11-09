@@ -561,6 +561,12 @@ export class ConversationService {
 
     await conversation.save();
 
+    // Evict removed member's sockets from conversation room
+    this.socketService
+      .getIO()
+      ?.in(`user:${memberId}`)
+      .socketsLeave(`conversation:${conversationId}`);
+
     const remainingIds = conversation.participants.map((p) => p.user.toString());
     this.socketService.sendToUsers([...remainingIds, memberId], "chat:member_removed", {
       conversationId: conversation._id.toString(),
@@ -597,6 +603,11 @@ export class ConversationService {
       const allMemberIds = conversation.participants.map((p) => p.user.toString());
       await ConversationModel.deleteOne({ _id: conversation._id });
       await MessageModel.deleteMany({ conversationId: conversation._id });
+
+      // Evict all sockets from conversation room
+      this.socketService
+        .getIO()
+        ?.socketsLeave(`conversation:${conversationId}`);
 
       this.socketService.sendToUsers(allMemberIds, "chat:conversation_deleted", {
         conversationId,

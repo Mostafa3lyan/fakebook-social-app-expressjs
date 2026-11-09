@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from "../../common/exceptions/index";
 import { IUser, IPagination } from "../../common/interfaces";
-import { notificationsService, NotificationsService, s3Service, S3Service } from "../../common/services";
+import { notificationsService, NotificationsService, s3Service, S3Service, socketService, SocketService } from "../../common/services";
 import { RedisService, redisService } from "../../common/services/redis.service";
 import { TokenService } from "../../common/services/token.service";
 import { decodedTypes } from "../../common/types/user.types";
@@ -41,6 +41,7 @@ class UserService {
   private readonly tokenService: TokenService;
   private readonly s3: S3Service;
   private readonly notificationsService: NotificationsService;
+  private readonly socketService: SocketService;
   constructor(
     userRepository: UserRepository = new UserRepository(),
     postServiceInstance: PostService = postService,
@@ -50,6 +51,7 @@ class UserService {
     redis: RedisService = redisService,
     s3: S3Service = s3Service,
     notifications: NotificationsService = notificationsService,
+    socket: SocketService = socketService,
   ) {
     this.userRepository = userRepository;
     this.postService = postServiceInstance;
@@ -59,6 +61,7 @@ class UserService {
     this.redis = redis;
     this.s3 = s3;
     this.notificationsService = notifications;
+    this.socketService = socket;
   }
 
 
@@ -234,12 +237,15 @@ class UserService {
         user.changeCredentialsTime = new Date();
         await user.save();
 
-    try {
-      await this.notificationsService.identifyUser(user);
-    } catch (err) {
-      console.error("Failed to sync profile update to Knock:", err);
-    }
+        try {
+          await this.notificationsService.identifyUser(user);
+        } catch (err) {
+          console.error("Failed to sync profile update to Knock:", err);
+        }
         await this.redis.del(await this.redis.scanKeys(this.redis.revokeTokenPrefix(sub)));
+
+        // Disconnect all active sockets for this user (VULN-BE-14)
+        this.socketService.getIO()?.in(`user:${sub}`).disconnectSockets(true);
         break;
 
       default: {
@@ -479,6 +485,10 @@ class UserService {
     await account.save();
 
     await this.redis.del(await this.redis.scanKeys(this.redis.revokeTokenPrefix(user._id)));
+
+    // Disconnect active socket sessions on password change (VULN-BE-14)
+    this.socketService.getIO()?.in(`user:${user._id.toString()}`).disconnectSockets(true);
+
     return this.tokenService.createLoginCredentials(user, issuer);
   };
 
@@ -503,6 +513,9 @@ class UserService {
     if (revokedKeys.length) {
       await this.redis.del(revokedKeys);
     }
+
+    // Disconnect active socket sessions on account deactivation (VULN-BE-14)
+    this.socketService.getIO()?.in(`user:${user._id.toString()}`).disconnectSockets(true);
 
     return { message: "Account deactivated successfully. You can restore it within 30 days." };
   };
@@ -589,6 +602,9 @@ class UserService {
     if (revokedKeys.length) {
       await this.redis.del(revokedKeys);
     }
+
+    // Disconnect active socket sessions on permanent account deletion (VULN-BE-14)
+    this.socketService.getIO()?.in(`user:${user._id.toString()}`).disconnectSockets(true);
 
     // 8. Delete user account document permanently
     const account = await this.userRepository.deleteOne({

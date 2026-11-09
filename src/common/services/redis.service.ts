@@ -100,6 +100,18 @@ export class RedisService {
     return `ResetToken::${token}`;
   }
 
+  loginAttemptsKey(email: string): string {
+    return `Login::Attempts::${email.trim().toLowerCase()}`;
+  }
+
+  loginBlockKey(email: string): string {
+    return `Login::Blocked::${email.trim().toLowerCase()}`;
+  }
+
+  magicLinkRateKey(email: string): string {
+    return `MagicLink::Rate::${email.trim().toLowerCase()}`;
+  }
+
   // ===========================
   // CRUD
   // ===========================

@@ -15,7 +15,7 @@ import {
   UnauthorizedException,
 } from "../../common/exceptions/index";
 import { IUser } from "../../common/interfaces";
-import { notificationsService, NotificationsService, TokenService } from "../../common/services";
+import { notificationsService, NotificationsService, socketService, SocketService, TokenService } from "../../common/services";
 import { RedisService, redisService } from "../../common/services/redis.service";
 import { createOtp, emailEmitter, magicLinkTemplate, sendEmail } from "../../common/utils/index";
 import {
@@ -32,10 +32,14 @@ class AuthenticationService {
   private readonly redis: RedisService;
   private readonly tokenService: TokenService;
   private readonly notificationsService: NotificationsService;
+  private readonly socketService: SocketService;
 
   private readonly MAX_ATTEMPTS = 3;
   private readonly MAX_VERIFY_ATTEMPTS = 5;
   private readonly BLOCK_TTL = 60 * 60; // 1 hour
+  private readonly MAX_LOGIN_ATTEMPTS = 5;
+  private readonly LOGIN_BLOCK_TTL = 15 * 60; // 15 minutes
+  private readonly LOGIN_ATTEMPTS_TTL = 15 * 60; // 15 minutes
 
   private async checkAndIncrementVerifyAttempts(attemptsKey: string, targetKey: string): Promise<void> {
     const attempts = await this.redis.incr(attemptsKey);
@@ -54,11 +58,13 @@ class AuthenticationService {
     redis: RedisService = redisService,
     tokenService: TokenService = new TokenService(),
     notifications: NotificationsService = notificationsService,
+    socket: SocketService = socketService,
   ) {
     this.userRepository = userRepository;
     this.redis = redis;
     this.tokenService = tokenService;
     this.notificationsService = notifications;
+    this.socketService = socket;
   }
 
 
@@ -220,6 +226,15 @@ class AuthenticationService {
 
   // sendMagicLink
   private sendMagicLink = async (email: string, userId: Types.ObjectId): Promise<void> => {
+    const rateKey = this.redis.magicLinkRateKey(email);
+    const requests = await this.redis.incr(rateKey);
+    if (requests === 1) {
+      await this.redis.expire(rateKey, 600); // 10 minutes window
+    }
+    if (requests > 3) {
+      throw new TooManyRequestsException("Too many magic link requests. Please try again in 10 minutes.");
+    }
+
     const token = this.tokenService.generateToken({ payload: { userId }, secretKey: MAGIC_LINK_SECRET, options: { expiresIn: "15m" } });
     const link = `${CLIENT_URL}/reset-password?token=${token}`;
 
@@ -228,18 +243,20 @@ class AuthenticationService {
 
   // forgotPassword
   public forgotPassword = async ({ email, method = "otp" }: { email: string; method?: "otp" | "link" }): Promise<void> => {
+    const normalizedEmail = (email || "").trim().toLowerCase();
     const account = await this.userRepository.findOne({
-      filter: { email, emailConfirmedAt: { $exists: true }, provider: ProviderEnum.System },
+      filter: { email: normalizedEmail, emailConfirmedAt: { $exists: true }, provider: ProviderEnum.System },
       options: { lean: false },
     });
     if (!account) {
-      throw new NotFoundException("Cannot find account with this email");
+      // Return silently to prevent user/email enumeration (VULN-BE-13)
+      return;
     }
 
     if (method === "link") {
-      await this.sendMagicLink(email, account._id);
+      await this.sendMagicLink(normalizedEmail, account._id);
     } else {
-      await this.sendEmailWithOtp(email, "reset code", EmailSubjectEnum.Forgot_Password);
+      await this.sendEmailWithOtp(normalizedEmail, "reset code", EmailSubjectEnum.Forgot_Password);
     }
   };
 
@@ -348,6 +365,9 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
     await this.redis.del(this.redis.resetTokenKey(resetToken));
     await this.redis.del(await this.redis.scanKeys(this.redis.revokeTokenPrefix(account._id)));
 
+    // Disconnect active socket sessions on password reset (VULN-BE-14)
+    this.socketService.getIO()?.in(`user:${account._id.toString()}`).disconnectSockets(true);
+
     return account;
   };
 
@@ -357,16 +377,41 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
   // login
   public async login(data: LoginDto, issuer: string): Promise<ILoginResponse> {
     const { email, password, fcmToken } = data;
+    const normalizedEmail = (email || "").trim().toLowerCase();
+
+    // Check account lockout (5 failed attempts -> 15 min cooldown)
+    const isLocked = await this.redis.get(this.redis.loginBlockKey(normalizedEmail));
+    if (isLocked) {
+      const remaining = await this.redis.ttl(this.redis.loginBlockKey(normalizedEmail));
+      const minutes = remaining > 0 ? Math.ceil(remaining / 60) : 15;
+      throw new TooManyRequestsException(
+        `Too many failed login attempts. Please try again in ${minutes} minutes.`,
+      );
+    }
+
+    const registerFailedLogin = async () => {
+      const attempts = await this.redis.incr(this.redis.loginAttemptsKey(normalizedEmail));
+      if (attempts === 1) {
+        await this.redis.expire(this.redis.loginAttemptsKey(normalizedEmail), this.LOGIN_ATTEMPTS_TTL);
+      }
+      if (attempts >= this.MAX_LOGIN_ATTEMPTS) {
+        await this.redis.set(this.redis.loginBlockKey(normalizedEmail), "1", this.LOGIN_BLOCK_TTL);
+        await this.redis.del(this.redis.loginAttemptsKey(normalizedEmail));
+        throw new TooManyRequestsException(
+          "Account temporarily locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.",
+        );
+      }
+    };
 
     const user = await this.userRepository.findOne({
-      filter: { email, provider: ProviderEnum.System, emailConfirmedAt: { $exists: true } },
+      filter: { email: normalizedEmail, provider: ProviderEnum.System, emailConfirmedAt: { $exists: true } },
       projection: "+password",
       options: { lean: false },
     });
 
     if (!user) {
       const unconfirmedUser = await this.userRepository.findOne({
-        filter: { email, provider: ProviderEnum.System, emailConfirmedAt: { $exists: false } },
+        filter: { email: normalizedEmail, provider: ProviderEnum.System, emailConfirmedAt: { $exists: false } },
         projection: "+password",
         options: { lean: false },
       });
@@ -380,10 +425,10 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
 
         if (match) {
           try {
-            const payload = { email, subject: EmailSubjectEnum.Confirm_EMAIL };
+            const payload = { email: normalizedEmail, subject: EmailSubjectEnum.Confirm_EMAIL };
             const otpTtl = await this.redis.ttl(this.redis.otpKey(payload));
             if (otpTtl <= 0) {
-              await this.sendEmailWithOtp(email, "email address", EmailSubjectEnum.Confirm_EMAIL);
+              await this.sendEmailWithOtp(normalizedEmail, "email address", EmailSubjectEnum.Confirm_EMAIL);
             }
           } catch {
             // Ignore OTP cooldown/rate-limit errors so the user is still redirected to confirm-signup-email
@@ -393,7 +438,7 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
       }
 
       const deactivatedUser = await this.userRepository.findOne({
-        filter: { email, provider: ProviderEnum.System, emailConfirmedAt: { $exists: true }, paranoid: false },
+        filter: { email: normalizedEmail, provider: ProviderEnum.System, emailConfirmedAt: { $exists: true }, paranoid: false },
         projection: "+password",
         options: { lean: false },
       });
@@ -418,6 +463,7 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
         }
       }
 
+      await registerFailedLogin();
       throw new UnauthorizedException("Email or Password is incorrect");
     }
 
@@ -427,8 +473,12 @@ public verifyMagicLink = async (token: string): Promise<{ resetToken: string }> 
       approach: HashApproachEnum.bcrypt,
     });
     if (!match) {
+      await registerFailedLogin();
       throw new UnauthorizedException("Email or Password is incorrect");
     }
+
+    // Reset failed attempts on success
+    await this.redis.del(this.redis.loginAttemptsKey(normalizedEmail));
 
     if (user.twoFactorVerified) {
       await this.requestTwoFactorAuth(user);

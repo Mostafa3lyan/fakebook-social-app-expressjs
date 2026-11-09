@@ -53,7 +53,7 @@ router.patch(
   "/:messageId/read",
   authentication(),
   async (req: Request, res: Response) => {
-    await notificationsService.markAsRead(req.params.messageId as string);
+    await notificationsService.markAsRead(req.user._id.toString(), req.params.messageId as string);
 
     return successResponse({
       message: "Notification marked as read",

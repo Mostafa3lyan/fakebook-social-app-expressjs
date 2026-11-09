@@ -1,6 +1,7 @@
 import Knock from "@knocklabs/node";
 import { HydratedDocument } from "mongoose";
 import { IUser } from "../interfaces";
+import { ForbiddenException, NotFoundException } from "../exceptions";
 import {
   KNOCK_API_KEY,
   KNOCK_FCM_CHANNEL_ID,
@@ -211,7 +212,27 @@ export class NotificationsService {
     };
   }
 
-  async markAsRead(messageId: string) {
+  async markAsRead(userId: string, messageId: string) {
+    let message: any;
+    try {
+      message = await this.knock.messages.get(messageId);
+    } catch {
+      throw new NotFoundException("Notification not found");
+    }
+
+    if (!message) {
+      throw new NotFoundException("Notification not found");
+    }
+
+    const recipientId =
+      typeof message.recipient === "string"
+        ? message.recipient
+        : (message.recipient as any)?.id;
+
+    if (recipientId !== userId) {
+      throw new ForbiddenException("You are not authorized to mark this notification as read");
+    }
+
     return this.knock.messages.markAsRead(messageId);
   }
 
