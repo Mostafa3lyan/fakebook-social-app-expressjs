@@ -11,8 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start:dev": "cross-env NODE_ENV=development concurrently \"tsc --watch\" \"node --watch dist/main.js\"",
-    "start:prod": "cross-env NODE_ENV=production concurrently \"tsc --watch\" \"node --watch dist/main.js\""
-  },
+    "start:prod": "cross-env NODE_ENV=production pm2 start dist/main.js -i 0 --name fakebook"
+    },
   "keywords": [],
   "author": "",
   "license": "ISC",
