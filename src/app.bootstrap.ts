@@ -4,9 +4,9 @@ import express from "express";
 import type { Express, Request, Response, NextFunction } from "express"
 import { authRouter, userRouter, notificationsRouter, postRouter, commentRouter, friendsRouter, conversationRouter, messageRouter } from "./modules";
 import { createHandler } from "graphql-http/lib/use/express";
-import { schema, graphQLContext, type GraphQLContext, depthLimit } from "./modules/graphql";
-import { authentication, globalErrorHandler } from "./middleware";
-import { port } from "./config/config.service";
+import { schema, graphQLContext, type GraphQLContext, depthLimit, disableIntrospectionRule } from "./modules/graphql";
+import { authentication, globalErrorHandler, globalIpRateLimiter } from "./middleware";
+import { CLIENT_URL, port } from "./config/config.service";
 import { redisService } from "./common/services/redis.service";
 import cors from "cors";
 import { successResponse } from "./common/response";
@@ -21,13 +21,29 @@ const s3WriteStream = promisify(pipeline);
 export const createApp = (): Express => {
   const app: Express = express();
 
-  app.use(express.json(), cors());
+  app.set("trust proxy", 1);
+
+  app.use(
+    express.json(),
+    cors({
+      origin: CLIENT_URL ? [CLIENT_URL] : true,
+      credentials: true,
+    }),
+    globalIpRateLimiter({ limit: 100, windowSeconds: 60 }),
+  );
+
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowIntrospection = process.env.GRAPHQL_INTROSPECTION === "true";
+  const validationRules = [depthLimit(6)];
+  if (isProduction && !allowIntrospection) {
+    validationRules.push(disableIntrospectionRule);
+  }
 
   // GraphQL endpoint
   app.all("/graphql", createHandler<GraphQLContext>({
     schema,
     context: graphQLContext,
-    validationRules: [depthLimit(6)],
+    validationRules,
   }));
 
   //application routing
@@ -74,7 +90,11 @@ export const createApp = (): Express => {
     const path = req.params.path as string[];
     const key = path.join("/");
     const safeName = fileName ? sanitizeFileName(String(fileName)) : undefined;
-    const url = await s3Service.getPreSignedUrl({ key, download, fileName: safeName });
+    const url = await s3Service.getPreSignedUrl({
+      key,
+      ...(download ? { download } : {}),
+      ...(safeName ? { fileName: safeName } : {}),
+    });
 
     return successResponse({ res, data: { url } });
   })

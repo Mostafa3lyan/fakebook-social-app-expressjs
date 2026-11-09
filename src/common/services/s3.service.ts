@@ -254,11 +254,11 @@ export class S3Service {
     fileName,
     download,
   }: {
-    bucket?: string;
+    bucket?: string | undefined;
     key: string;
-    expiresIn?: number;
-    fileName?: string;
-    download?: string;
+    expiresIn?: number | undefined;
+    fileName?: string | undefined;
+    download?: string | undefined;
   }): Promise<string> {
     const safeName = fileName ? sanitizeFileName(fileName) : undefined;
     const command = new GetObjectCommand({

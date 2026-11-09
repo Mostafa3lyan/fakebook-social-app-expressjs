@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { authentication, validation } from "../../middleware";
+import { authentication, userActionRateLimiter, validation } from "../../middleware";
 import { successResponse } from "../../common/response";
 import { commentService } from "./comment.service";
 import * as validators from "./comment.validation";
@@ -15,6 +15,12 @@ const router = Router({ mergeParams: true });
 router.post(
   "/",
   authentication(),
+  userActionRateLimiter({
+    action: "create_comment",
+    limit: 10,
+    windowSeconds: 60,
+    message: "You can only post up to 10 comments per minute. Please slow down.",
+  }),
   cloudFileUpload({ validation: fileFieldValidation.image }).array("attachments", 10),
   validation(validators.createCommentSchema),
   async (req: Request, res: Response) => {
@@ -76,6 +82,12 @@ router.patch(
 router.post(
   "/:commentId/reply",
   authentication(),
+  userActionRateLimiter({
+    action: "create_comment",
+    limit: 10,
+    windowSeconds: 60,
+    message: "You can only post up to 10 comments per minute. Please slow down.",
+  }),
   cloudFileUpload({ validation: fileFieldValidation.image }).array("attachments", 10),
   validation(validators.replyOnCommentSchema),
   async (req: Request, res: Response) => {

@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { successResponse } from "../../common/response";
 import { cloudFileUpload, fileFieldValidation } from "../../common/utils/multer";
-import { authentication, validation } from "../../middleware";
+import { authentication, userActionRateLimiter, validation } from "../../middleware";
 import { messageService } from "./message.service";
 import * as validators from "./message.validation";
 
@@ -35,6 +35,12 @@ router.get(
 router.post(
   "/",
   authentication(),
+  userActionRateLimiter({
+    action: "send_message",
+    limit: 20,
+    windowSeconds: 10,
+    message: "You are sending messages too fast. Please wait a few seconds.",
+  }),
   cloudFileUpload({ validation: allowedChatMimetypes }).array("attachments", 5),
   validation(validators.sendMessageSchema),
   async (req: Request, res: Response) => {

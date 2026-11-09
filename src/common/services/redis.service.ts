@@ -204,6 +204,7 @@ async setIfNotExists(key: string, value: string, ttlSeconds: number): Promise<bo
 
   async expire(key: string, ttlSeconds: number): Promise<number> {
     try {
+      if (!this.client.isOpen) return -2;
       return await this.client.expire(key, ttlSeconds);
     } catch (error) {
       console.error("Failed to set Redis TTL:", error);
@@ -213,6 +214,7 @@ async setIfNotExists(key: string, value: string, ttlSeconds: number): Promise<bo
 
   async ttl(key: string): Promise<number> {
     try {
+      if (!this.client.isOpen) return -2;
       return await this.client.ttl(key);
     } catch (error) {
       console.error("Failed to get Redis TTL:", error);
@@ -222,6 +224,7 @@ async setIfNotExists(key: string, value: string, ttlSeconds: number): Promise<bo
 
   async incr(key: string): Promise<number> {
     try {
+      if (!this.client.isOpen) return -2;
       return await this.client.incr(key);
     } catch (error) {
       console.error("Failed to increment Redis key:", error);

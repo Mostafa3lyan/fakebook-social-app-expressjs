@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { successResponse } from "../../common/response";
 import { PaginationDto, paginationValidationSchema } from "../../common/validation";
-import { authentication, validation } from "../../middleware";
+import { authentication, userActionRateLimiter, validation } from "../../middleware";
 import { friendsService } from "./friends.service";
 import * as validators from "./friends.validation";
 
@@ -11,6 +11,12 @@ const router = Router();
 router.post(
   "/request/:receiverId",
   authentication(),
+  userActionRateLimiter({
+    action: "send_friend_request",
+    limit: 20,
+    windowSeconds: 3600,
+    message: "You have reached the limit of 20 friend requests per hour. Please try again later.",
+  }),
   validation(validators.receiverParamSchema),
   async (req: Request, res: Response) => {
     const request = await friendsService.sendFriendRequest(

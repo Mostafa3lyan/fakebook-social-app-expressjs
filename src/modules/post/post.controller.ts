@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { authentication, validation } from "../../middleware";
+import { authentication, userActionRateLimiter, validation } from "../../middleware";
 import { successResponse } from "../../common/response";
 import { postService } from "./post.service";
 import * as validators from "./post.validation";
@@ -14,6 +14,12 @@ const router = Router();
 router.post(
   "/",
   authentication(),
+  userActionRateLimiter({
+    action: "create_post",
+    limit: 5,
+    windowSeconds: 60,
+    message: "You can only create up to 5 posts per minute. Please slow down.",
+  }),
   cloudFileUpload({ validation: fileFieldValidation.image }).array("attachments", 10),
   validation(validators.createPostSchema),
   async (req: Request, res: Response) => {
